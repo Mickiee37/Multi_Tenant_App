@@ -10,11 +10,14 @@ class TenantApplication extends Model
 {
     use HasFactory, Notifiable;
 
+    protected $connection = 'mysql'; // Always use the main database connection
+
     protected $fillable = [
         'first_name',
         'last_name',
         'email',
         'domain',
+        'database_name',
         'status',
         'rejection_reason',
     ];

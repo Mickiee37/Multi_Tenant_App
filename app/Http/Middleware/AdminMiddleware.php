@@ -11,14 +11,12 @@ class AdminMiddleware
     /**
      * Handle an incoming request.
      *
-     * @param  \Illuminate\Http\Request  $request
-     * @param  \Closure  $next
-     * @return mixed
+     * @param  \Closure(\Illuminate\Http\Request): (\Symfony\Component\HttpFoundation\Response)  $next
      */
     public function handle(Request $request, Closure $next): Response
     {
         if (!auth()->check() || !auth()->user()->is_admin) {
-            abort(403, 'Unauthorized action.');
+            return redirect()->route('dashboard')->with('error', 'Unauthorized access.');
         }
 
         return $next($request);

@@ -14,7 +14,7 @@ class GmailServiceProvider extends ServiceProvider
         $this->app->singleton(Client::class, function ($app) {
             $client = new Client();
             
-            $credentialsPath = storage_path('app/google/client_secret_1094970163345-3k5febu0tvtd5dq5208su282vaiccdbh.apps.googleusercontent.com.json');
+            $credentialsPath = storage_path('app/google/client_secret_1094970163345-5ca5toqgma7auv3ueebj8jj7qficjjuv.apps.googleusercontent.com.json');
             
             if (!file_exists($credentialsPath)) {
                 throw new \Exception('Gmail credentials file not found at: ' . $credentialsPath);

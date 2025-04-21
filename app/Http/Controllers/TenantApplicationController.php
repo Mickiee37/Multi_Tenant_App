@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\TenantApplication;
 use App\Models\Tenant;
+use App\Services\TenantDatabaseService;
 use App\Services\GmailService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -13,10 +14,12 @@ use Illuminate\Support\Facades\DB;
 
 class TenantApplicationController extends Controller
 {
+    protected $databaseService;
     protected $gmailService;
 
-    public function __construct(GmailService $gmailService)
+    public function __construct(TenantDatabaseService $databaseService, GmailService $gmailService)
     {
+        $this->databaseService = $databaseService;
         $this->gmailService = $gmailService;
     }
 
@@ -27,101 +30,177 @@ class TenantApplicationController extends Controller
 
     public function register(Request $request)
     {
-        $validated = $request->validate([
+        $request->validate([
             'first_name' => 'required|string|max:255',
             'last_name' => 'required|string|max:255',
-            'email' => 'required|email|unique:tenant_applications,email',
+            'email' => 'required|string|email|max:255|unique:users',
+            'domain' => 'required|string|max:255|unique:tenants,domain|regex:/^[a-z0-9-]+$/',
         ]);
 
+        // Generate a unique database name
+        $databaseName = 'tenant_' . Str::slug($request->domain) . '_' . Str::random(8);
+
         // Create tenant application
-        $application = TenantApplication::create($validated);
+        $application = TenantApplication::create([
+            'first_name' => $request->first_name,
+            'last_name' => $request->last_name,
+            'email' => $request->email,
+            'domain' => $request->domain,
+            'database_name' => $databaseName,
+            'status' => 'pending'
+        ]);
 
         // Send confirmation email
-        $emailContent = "
-            <h2>Thank you for your application!</h2>
-            <p>Dear {$validated['first_name']},</p>
-            <p>We have received your tenant application. Our admin team will review it shortly.</p>
-            <p>We will notify you once your application has been processed.</p>
-            <br>
-            <p>Best regards,<br>Your Multi-Tenant Team</p>
-        ";
-
         try {
+            $emailContent = "
+                <h2>Thank you for your application!</h2>
+                <p>Dear {$request->first_name},</p>
+                <p>We have received your tenant application. Our admin team will review it shortly.</p>
+                <p>Your requested domain: {$request->domain}.localhost</p>
+                <p>We will notify you once your application has been processed.</p>
+                <br>
+                <p>Best regards,<br>Your Multi-Tenant Team</p>
+            ";
+
             $this->gmailService->sendEmail(
-                $validated['email'],
+                $request->email,
                 'Tenant Application Received',
                 $emailContent
             );
         } catch (\Exception $e) {
-            // Log the error but don't stop the process
-            \Log::error('Failed to send confirmation email: ' . $e->getMessage());
+            Log::error('Failed to send confirmation email: ' . $e->getMessage());
         }
 
         return redirect()->route('tenant.register.success')
-            ->with('success', 'Your application has been submitted successfully. Please wait for admin approval.');
-    }
-
-    public function adminDashboard()
-    {
-        $applications = TenantApplication::latest()->get();
-        return view('admin.tenant-applications', compact('applications'));
+            ->with('success', 'Your application has been submitted successfully. Please check your email for confirmation.');
     }
 
     public function approve(TenantApplication $application)
     {
+        \Log::info('Approve method called', ['application_id' => $application->id]);
+
+        // Check if application is already approved
+        if ($application->status === 'approved') {
+            return back()->with('error', 'Application is already approved.');
+        }
+
         try {
+            // Ensure we're using the main database for tenant application updates
+            DB::setDefaultConnection('mysql');
             DB::beginTransaction();
 
-            // Generate base domain
-            $baseDomain = Str::slug($application->first_name . '-' . $application->last_name);
-            
-            // Check if domain exists and append number if it does
-            $domain = $baseDomain;
-            $counter = 1;
-            while (Tenant::find($domain)) {
-                $domain = $baseDomain . '-' . $counter;
-                $counter++;
+            // Validate application has required fields
+            if (!$application->domain || !$application->email) {
+                throw new \Exception('Application missing required fields (domain or email)');
             }
 
-            $username = Str::lower($application->first_name . '.' . $application->last_name);
+            // Check if tenant exists and delete if it does
+            if (Tenant::find($application->domain)) {
+                \Log::info('Deleting existing tenant', ['domain' => $application->domain]);
+                Tenant::find($application->domain)->delete();
+            }
+
+            \Log::info('Generating password and creating tenant');
+            
+            // Generate password for the tenant
             $password = Str::random(10);
 
-            Log::info('Creating tenant', ['domain' => $domain]);
-
-            // Create the tenant with unique domain
-            $tenant = Tenant::create(['id' => $domain]);
-
-            Log::info('Creating domain for tenant');
-
-            // Create domain
-            $tenant->domains()->create([
-                'domain' => $domain . '.localhost',
-            ]);
-
-            Log::info('Creating tenant admin user');
-
-            // Create the tenant's admin user
-            $tenant->run(function () use ($application, $password) {
-                \App\Models\User::create([
+            try {
+                // Create tenant record
+                $tenant = Tenant::create([
+                    'id' => $application->domain,
                     'name' => $application->first_name . ' ' . $application->last_name,
-                    'email' => $application->email,
-                    'password' => Hash::make($password),
-                    'is_admin' => true,
+                    'domain' => $application->domain,
+                    'database' => $application->database_name,
+                    'data' => [
+                        'name' => $application->first_name . ' ' . $application->last_name,
+                        'domain' => $application->domain,
+                        'database' => $application->database_name
+                    ]
                 ]);
-            });
+            } catch (\Exception $e) {
+                \Log::error('Failed to create tenant', [
+                    'error' => $e->getMessage(),
+                    'application' => $application->toArray()
+                ]);
+                throw new \Exception('Failed to create tenant: ' . $e->getMessage());
+            }
 
-            Log::info('Updating application status');
+            try {
+                // Create domain
+                $tenant->domains()->create([
+                    'domain' => $application->domain . '.localhost',
+                ]);
+            } catch (\Exception $e) {
+                \Log::error('Failed to create domain', ['error' => $e->getMessage()]);
+                throw new \Exception('Failed to create domain: ' . $e->getMessage());
+            }
+
+            // Create database directly
+            try {
+                // Get database configuration
+                $host = config('database.connections.mysql.host');
+                $username = config('database.connections.mysql.username');
+                $password = config('database.connections.mysql.password');
+
+                // Create database using direct MySQL commands
+                DB::unprepared("CREATE DATABASE IF NOT EXISTS `{$application->database_name}`");
+                
+                // Switch to the new database
+                DB::unprepared("USE `{$application->database_name}`");
+                
+                // Create users table
+                DB::unprepared("
+                    CREATE TABLE IF NOT EXISTS `users` (
+                        `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+                        `name` varchar(255) NOT NULL,
+                        `email` varchar(255) NOT NULL,
+                        `email_verified_at` timestamp NULL DEFAULT NULL,
+                        `password` varchar(255) NOT NULL,
+                        `is_admin` tinyint(1) NOT NULL DEFAULT '0',
+                        `remember_token` varchar(100) DEFAULT NULL,
+                        `created_at` timestamp NULL DEFAULT NULL,
+                        `updated_at` timestamp NULL DEFAULT NULL,
+                        PRIMARY KEY (`id`),
+                        UNIQUE KEY `users_email_unique` (`email`)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                ");
+
+                // Create the admin user directly
+                $hashedPassword = Hash::make($password);
+                $now = now()->format('Y-m-d H:i:s');
+                DB::unprepared("
+                    INSERT INTO `{$application->database_name}`.`users` 
+                    (`name`, `email`, `password`, `is_admin`, `created_at`, `updated_at`)
+                    VALUES (
+                        '{$application->first_name} {$application->last_name}',
+                        '{$application->email}',
+                        '{$hashedPassword}',
+                        1,
+                        '{$now}',
+                        '{$now}'
+                    )
+                ");
+            } catch (\Exception $e) {
+                \Log::error('Failed to create database or user', ['error' => $e->getMessage()]);
+                throw new \Exception('Failed to create database or user: ' . $e->getMessage());
+            }
 
             // Update application status
-            $application->update([
-                'status' => 'approved',
-                'domain' => $domain,
-            ]);
+            DB::setDefaultConnection('mysql'); // Ensure we're using the main database
+            $mainDb = config('database.connections.mysql.database');
+            DB::statement("USE `{$mainDb}`");
+            DB::table('tenant_applications')
+                ->where('id', $application->id)
+                ->update([
+                    'status' => 'approved',
+                    'updated_at' => now()
+                ]);
 
-            Log::info('Preparing approval email');
+            \Log::info('Sending approval email');
 
-            // Update email content to use the correct port number
-            $domainUrl = 'http://' . $domain . '.localhost:8000';
+            // Send approval email with credentials
+            $domainUrl = 'http://' . $application->domain . '.localhost:8000';
             $emailContent = "
                 <h2>Congratulations! Your Tenant Application is Approved</h2>
                 <p>Dear {$application->first_name},</p>
@@ -137,67 +216,76 @@ class TenantApplicationController extends Controller
                 <p>Best regards,<br>Your Multi-Tenant Team</p>
             ";
 
-            Log::info('Sending approval email', ['to' => $application->email]);
-
-            $this->gmailService->sendEmail(
-                $application->email,
-                'Tenant Application Approved - Your Login Credentials',
-                $emailContent
-            );
+            try {
+                $this->gmailService->sendEmail(
+                    $application->email,
+                    'Tenant Application Approved - Your Login Credentials',
+                    $emailContent
+                );
+                \Log::info('Approval email sent successfully');
+            } catch (\Exception $e) {
+                \Log::error('Failed to send approval email', ['error' => $e->getMessage()]);
+                // Continue with commit even if email fails
+                DB::commit();
+                return back()->with('warning', 'Application approved but failed to send email. Error: ' . $e->getMessage());
+            }
 
             DB::commit();
-            Log::info('Approval process completed successfully');
-
+            \Log::info('Application approved successfully');
             return back()->with('success', "Application approved! Credentials have been sent to {$application->email}");
 
         } catch (\Exception $e) {
             DB::rollBack();
-            Log::error('Error in approval process', [
+            \Log::error('Error in approval process', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-
-            // If we failed after creating the tenant, we should still show success but note the email failure
-            if (isset($tenant)) {
-                return back()->with('success', "Application approved but failed to send email. Error: " . $e->getMessage());
-            }
-
-            return back()->with('error', "Failed to approve application. Error: " . $e->getMessage());
+            return back()->with('error', $e->getMessage())->withInput();
         }
     }
 
-    public function reject(Request $request, TenantApplication $application)
+    public function reject(TenantApplication $application)
     {
-        $validated = $request->validate([
-            'rejection_reason' => 'required|string|max:1000'
-        ]);
-
-        $application->update([
-            'status' => 'rejected',
-            'rejection_reason' => $validated['rejection_reason']
-        ]);
-
-        // Send rejection email
-        $emailContent = "
-            <h2>Tenant Application Status Update</h2>
-            <p>Dear {$application->first_name},</p>
-            <p>We regret to inform you that your tenant application has been declined.</p>
-            <p><strong>Reason:</strong> {$validated['rejection_reason']}</p>
-            <p>If you have any questions, please feel free to contact us.</p>
-            <br>
-            <p>Best regards,<br>Your Multi-Tenant Team</p>
-        ";
-
         try {
+            $application->update(['status' => 'rejected']);
+
+            // Send rejection email
+            $emailContent = "
+                <h2>Tenant Application Status Update</h2>
+                <p>Dear {$application->first_name},</p>
+                <p>We regret to inform you that your tenant application has been declined.</p>
+                <p>If you have any questions, please feel free to contact us.</p>
+                <br>
+                <p>Best regards,<br>Your Multi-Tenant Team</p>
+            ";
+
             $this->gmailService->sendEmail(
                 $application->email,
                 'Tenant Application Status Update',
                 $emailContent
             );
-        } catch (\Exception $e) {
-            \Log::error('Failed to send rejection email: ' . $e->getMessage());
-        }
 
-        return back()->with('success', 'Application rejected successfully.');
+            return back()->with('success', 'Application rejected successfully.');
+        } catch (\Exception $e) {
+            Log::error('Failed to send rejection email: ' . $e->getMessage());
+            return back()->with('warning', 'Application rejected but failed to send notification email.');
+        }
+    }
+
+    public function adminDashboard()
+    {
+        $applications = TenantApplication::latest()->get();
+        return view('admin.tenant-applications', compact('applications'));
+    }
+
+    public function requestBackup(Request $request, $tenantId)
+    {
+        $tenant = TenantApplication::findOrFail($tenantId);
+        $backupFile = $this->databaseService->createBackup($tenant->database_name);
+        
+        return response()->download(
+            storage_path("app/backups/{$backupFile}"),
+            $backupFile
+        );
     }
 } 

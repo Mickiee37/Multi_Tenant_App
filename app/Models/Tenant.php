@@ -11,12 +11,20 @@ class Tenant extends BaseTenant implements TenantWithDatabase
 {
     use HasDatabase, HasDomains;
 
+    protected $fillable = [
+        'id',
+        'name',
+        'domain',
+        'database'
+    ];
+
     public static function getCustomColumns(): array
     {
         return [
             'id',
-            'created_at',
-            'updated_at',
+            'name',
+            'domain',
+            'database',
         ];
     }
 } 

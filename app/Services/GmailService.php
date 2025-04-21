@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\Log;
 class GmailService
 {
     protected $service;
-    protected $credentialsFile = 'google/client_secret_1094970163345-3k5febu0tvtd5dq5208su282vaiccdbh.apps.googleusercontent.com.json';
+    protected $credentialsFile = 'google/client_secret_1094970163345-5ca5toqgma7auv3ueebj8jj7qficjjuv.apps.googleusercontent.com.json';
     protected $tokenFile = 'google/token.json';
 
     public function __construct(Gmail $service)
