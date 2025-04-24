@@ -103,7 +103,8 @@ class TenantApplicationController extends Controller
             \Log::info('Generating password and creating tenant');
             
             // Generate password for the tenant
-            $password = Str::random(10);
+            $generatedPassword = Str::random(10);
+            \Log::info('Password generated', ['password' => $generatedPassword]);
 
             try {
                 // Create tenant record
@@ -115,75 +116,116 @@ class TenantApplicationController extends Controller
                     'data' => [
                         'name' => $application->first_name . ' ' . $application->last_name,
                         'domain' => $application->domain,
-                        'database' => $application->database_name
+                        'database' => $application->database_name,
+                        'initial_password' => $generatedPassword
                     ]
                 ]);
+
+                // Create domain
+                $tenant->domains()->create([
+                    'domain' => $application->domain . '.localhost',
+                ]);
+
+                // Create database directly
+                try {
+                    // Get database configuration
+                    $host = config('database.connections.mysql.host');
+                    $username = config('database.connections.mysql.username');
+                    $dbPassword = config('database.connections.mysql.password');
+
+                    // Create database using direct MySQL commands
+                    DB::unprepared("CREATE DATABASE IF NOT EXISTS `{$application->database_name}`");
+                    
+                    // Switch to the new database
+                    DB::unprepared("USE `{$application->database_name}`");
+                    
+                    // Create users table
+                    DB::unprepared("
+                        CREATE TABLE IF NOT EXISTS `users` (
+                            `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+                            `name` varchar(255) NOT NULL,
+                            `email` varchar(255) NOT NULL,
+                            `email_verified_at` timestamp NULL DEFAULT NULL,
+                            `password` varchar(255) NOT NULL,
+                            `is_admin` tinyint(1) NOT NULL DEFAULT '0',
+                            `remember_token` varchar(100) DEFAULT NULL,
+                            `created_at` timestamp NULL DEFAULT NULL,
+                            `updated_at` timestamp NULL DEFAULT NULL,
+                            PRIMARY KEY (`id`),
+                            UNIQUE KEY `users_email_unique` (`email`)
+                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                    ");
+
+                    // Create the admin user directly
+                    $hashedPassword = Hash::make($generatedPassword);
+                    $now = now()->format('Y-m-d H:i:s');
+                    
+                    \Log::info('Creating user with password', [
+                        'email' => $application->email,
+                        'password' => $generatedPassword,
+                        'hashed_password' => $hashedPassword
+                    ]);
+
+                    DB::unprepared("
+                        INSERT INTO `{$application->database_name}`.`users` 
+                        (`name`, `email`, `password`, `is_admin`, `created_at`, `updated_at`)
+                        VALUES (
+                            '{$application->first_name} {$application->last_name}',
+                            '{$application->email}',
+                            '{$hashedPassword}',
+                            1,
+                            '{$now}',
+                            '{$now}'
+                        )
+                    ");
+
+                    // Send approval email with credentials
+                    $domainUrl = 'http://' . $application->domain . '.localhost:8000';
+                    $emailContent = "
+                        <h2>Congratulations! Your Tenant Application is Approved</h2>
+                        <p>Dear {$application->first_name},</p>
+                        <p>Your tenant application has been approved. Here are your login credentials:</p>
+                        <ul style='list-style-type: none; padding: 0;'>
+                            <li><strong>Domain:</strong> {$domainUrl}</li>
+                            <li><strong>Email:</strong> {$application->email}</li>
+                            <li><strong>Password:</strong> {$generatedPassword}</li>
+                        </ul>
+                        <p style='color: red; font-weight: bold;'>Please save these credentials and change your password after your first login.</p>
+                        <p><a href='{$domainUrl}' style='display: inline-block; background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;'>Click here to access your domain</a></p>
+                        <br>
+                        <p>Best regards,<br>Your Multi-Tenant Team</p>
+                    ";
+
+                    \Log::info('Preparing to send email with credentials', [
+                        'email' => $application->email,
+                        'domain' => $domainUrl,
+                        'password' => $generatedPassword
+                    ]);
+
+                    try {
+                        $this->gmailService->sendEmail(
+                            $application->email,
+                            'Tenant Application Approved - Your Login Credentials',
+                            $emailContent
+                        );
+                        \Log::info('Approval email sent successfully');
+                    } catch (\Exception $e) {
+                        \Log::error('Failed to send approval email', [
+                            'error' => $e->getMessage(),
+                            'email_content' => $emailContent
+                        ]);
+                        throw $e;
+                    }
+                } catch (\Exception $e) {
+                    \Log::error('Failed to create database or user', ['error' => $e->getMessage()]);
+                    throw new \Exception('Failed to create database or user: ' . $e->getMessage());
+                }
             } catch (\Exception $e) {
                 \Log::error('Failed to create tenant', [
                     'error' => $e->getMessage(),
                     'application' => $application->toArray()
                 ]);
                 throw new \Exception('Failed to create tenant: ' . $e->getMessage());
-            }
-
-            try {
-                // Create domain
-                $tenant->domains()->create([
-                    'domain' => $application->domain . '.localhost',
-                ]);
-            } catch (\Exception $e) {
-                \Log::error('Failed to create domain', ['error' => $e->getMessage()]);
-                throw new \Exception('Failed to create domain: ' . $e->getMessage());
-            }
-
-            // Create database directly
-            try {
-                // Get database configuration
-                $host = config('database.connections.mysql.host');
-                $username = config('database.connections.mysql.username');
-                $password = config('database.connections.mysql.password');
-
-                // Create database using direct MySQL commands
-                DB::unprepared("CREATE DATABASE IF NOT EXISTS `{$application->database_name}`");
-                
-                // Switch to the new database
-                DB::unprepared("USE `{$application->database_name}`");
-                
-                // Create users table
-                DB::unprepared("
-                    CREATE TABLE IF NOT EXISTS `users` (
-                        `id` bigint unsigned NOT NULL AUTO_INCREMENT,
-                        `name` varchar(255) NOT NULL,
-                        `email` varchar(255) NOT NULL,
-                        `email_verified_at` timestamp NULL DEFAULT NULL,
-                        `password` varchar(255) NOT NULL,
-                        `is_admin` tinyint(1) NOT NULL DEFAULT '0',
-                        `remember_token` varchar(100) DEFAULT NULL,
-                        `created_at` timestamp NULL DEFAULT NULL,
-                        `updated_at` timestamp NULL DEFAULT NULL,
-                        PRIMARY KEY (`id`),
-                        UNIQUE KEY `users_email_unique` (`email`)
-                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-                ");
-
-                // Create the admin user directly
-                $hashedPassword = Hash::make($password);
-                $now = now()->format('Y-m-d H:i:s');
-                DB::unprepared("
-                    INSERT INTO `{$application->database_name}`.`users` 
-                    (`name`, `email`, `password`, `is_admin`, `created_at`, `updated_at`)
-                    VALUES (
-                        '{$application->first_name} {$application->last_name}',
-                        '{$application->email}',
-                        '{$hashedPassword}',
-                        1,
-                        '{$now}',
-                        '{$now}'
-                    )
-                ");
-            } catch (\Exception $e) {
-                \Log::error('Failed to create database or user', ['error' => $e->getMessage()]);
-                throw new \Exception('Failed to create database or user: ' . $e->getMessage());
             }
 
             // Update application status
@@ -196,39 +238,6 @@ class TenantApplicationController extends Controller
                     'status' => 'approved',
                     'updated_at' => now()
                 ]);
-
-            \Log::info('Sending approval email');
-
-            // Send approval email with credentials
-            $domainUrl = 'http://' . $application->domain . '.localhost:8000';
-            $emailContent = "
-                <h2>Congratulations! Your Tenant Application is Approved</h2>
-                <p>Dear {$application->first_name},</p>
-                <p>Your tenant application has been approved. Here are your login credentials:</p>
-                <ul>
-                    <li><strong>Domain:</strong> {$domainUrl}</li>
-                    <li><strong>Email:</strong> {$application->email}</li>
-                    <li><strong>Password:</strong> {$password}</li>
-                </ul>
-                <p>Please change your password after your first login.</p>
-                <p><a href='{$domainUrl}'>Click here to access your domain</a></p>
-                <br>
-                <p>Best regards,<br>Your Multi-Tenant Team</p>
-            ";
-
-            try {
-                $this->gmailService->sendEmail(
-                    $application->email,
-                    'Tenant Application Approved - Your Login Credentials',
-                    $emailContent
-                );
-                \Log::info('Approval email sent successfully');
-            } catch (\Exception $e) {
-                \Log::error('Failed to send approval email', ['error' => $e->getMessage()]);
-                // Continue with commit even if email fails
-                DB::commit();
-                return back()->with('warning', 'Application approved but failed to send email. Error: ' . $e->getMessage());
-            }
 
             DB::commit();
             \Log::info('Application approved successfully');
@@ -274,8 +283,17 @@ class TenantApplicationController extends Controller
 
     public function adminDashboard()
     {
-        $applications = TenantApplication::latest()->get();
-        return view('admin.tenant-applications', compact('applications'));
+        // Get the current tenant's domain from the request
+        $host = request()->getHost();
+        $domain = str_replace('.localhost:8000', '', $host);
+        $domain = str_replace('.localhost', '', $domain);
+
+        // Get applications only for the current tenant
+        $applications = TenantApplication::where('domain', $domain)->get();
+
+        return view('admin.tenant-applications', [
+            'applications' => $applications
+        ]);
     }
 
     public function requestBackup(Request $request, $tenantId)

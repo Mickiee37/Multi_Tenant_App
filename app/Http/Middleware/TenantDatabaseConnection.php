@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\Response;
 use Illuminate\Support\Facades\Session;
+use App\Models\Tenant;
 
 class TenantDatabaseConnection
 {
@@ -20,14 +21,45 @@ class TenantDatabaseConnection
         Config::set('session.connection', 'mysql');
         Config::set('session.driver', 'database');
         Config::set('session.table', $mainDatabase . '.sessions');
-        
-        // Store the current session ID
-        $sessionId = Session::getId();
 
-        // Get tenant database from session using fully qualified table name
-        $tenantDatabase = DB::table($mainDatabase . '.sessions')
-            ->where('id', $sessionId)
-            ->value('tenant_database');
+        // First try to get tenant from domain
+        $host = $request->getHost();
+        $domain = str_replace('.localhost:8000', '', $host);
+        $domain = str_replace('.localhost', '', $domain);
+        
+        // Find tenant by domain
+        $tenant = null;
+        try {
+            DB::setDefaultConnection('mysql');
+            $tenant = DB::table('tenants')->where('domain', $domain)->first();
+        } catch (\Exception $e) {
+            \Log::error('Error finding tenant', ['error' => $e->getMessage(), 'domain' => $domain]);
+        }
+
+        $tenantDatabase = null;
+        if ($tenant) {
+            $tenantDatabase = $tenant->database;
+            
+            // Store tenant database in session
+            $sessionId = Session::getId();
+            try {
+                DB::table($mainDatabase . '.sessions')
+                    ->where('id', $sessionId)
+                    ->update(['tenant_database' => $tenantDatabase]);
+            } catch (\Exception $e) {
+                \Log::error('Error storing tenant in session', ['error' => $e->getMessage()]);
+            }
+        } else {
+            // If no tenant found by domain, try session as fallback
+            $sessionId = Session::getId();
+            try {
+                $tenantDatabase = DB::table($mainDatabase . '.sessions')
+                    ->where('id', $sessionId)
+                    ->value('tenant_database');
+            } catch (\Exception $e) {
+                \Log::error('Error getting tenant from session', ['error' => $e->getMessage()]);
+            }
+        }
 
         if ($tenantDatabase) {
             // Configure tenant connection

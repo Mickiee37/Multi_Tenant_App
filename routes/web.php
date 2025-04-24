@@ -24,8 +24,19 @@ Route::get('/', function () {
 });
 
 Route::get('/dashboard', function () {
+    $host = request()->getHost();
+    
+    // If we're on a tenant domain
+    if (strpos($host, '.localhost') !== false) {
+        if (auth()->user()->is_admin) {
+            return redirect()->route('tenant.admin.dashboard');
+        }
+        return view('tenant.dashboard');
+    }
+    
+    // If we're on the central domain
     if (auth()->user()->is_admin) {
-        return redirect()->route('admin.tenant.applications');
+        return redirect()->route('admin.dashboard');
     }
     return view('dashboard');
 })->middleware(['auth', 'verified'])->name('dashboard');
@@ -57,11 +68,11 @@ Route::get('/sign-up/success', function () {
 // Admin Routes
 Route::middleware(['auth', \App\Http\Middleware\AdminMiddleware::class])->group(function () {
     Route::get('/admin/tenant-applications', [TenantApplicationController::class, 'adminDashboard'])
-        ->name('admin.tenant.applications');
+        ->name('admin.tenant-applications');
     Route::post('/admin/tenant-applications/{application}/approve', [TenantApplicationController::class, 'approve'])
-        ->name('admin.tenant.approve');
+        ->name('admin.tenant-applications.approve');
     Route::post('/admin/tenant-applications/{application}/reject', [TenantApplicationController::class, 'reject'])
-        ->name('admin.tenant.reject');
+        ->name('admin.tenant-applications.reject');
 });
 
 // Google OAuth Routes
@@ -78,13 +89,23 @@ Route::get('/login', [LoginController::class, 'showLoginForm'])->name('login');
 Route::post('/login', [LoginController::class, 'login']);
 Route::post('/logout', [LoginController::class, 'logout'])->name('logout');
 
-// Admin Routes with full middleware class name
-Route::middleware(['auth', \App\Http\Middleware\AdminMiddleware::class])->prefix('admin')->group(function () {
-    Route::get('/dashboard', [AdminController::class, 'dashboard'])->name('admin.dashboard');
-    Route::get('/tenant-applications', [AdminController::class, 'tenantApplications'])->name('admin.tenant-applications');
-    Route::post('/tenant-applications/{id}/approve', [AdminController::class, 'approveTenantApplication'])->name('admin.tenant-applications.approve');
-    Route::post('/tenant-applications/{id}/reject', [AdminController::class, 'rejectTenantApplication'])->name('admin.tenant-applications.reject');
-});
+// Central Admin Routes (only accessible from central domain)
+Route::middleware(['auth', \App\Http\Middleware\AdminMiddleware::class, \App\Http\Middleware\CentralDomainMiddleware::class])
+    ->prefix('admin')
+    ->group(function () {
+        Route::get('/dashboard', [AdminController::class, 'dashboard'])->name('admin.dashboard');
+        Route::get('/tenant-applications', [AdminController::class, 'tenantApplications'])->name('admin.tenant-applications');
+        Route::post('/tenant-applications/{id}/approve', [AdminController::class, 'approveTenantApplication'])->name('admin.tenant-applications.approve');
+        Route::post('/tenant-applications/{id}/reject', [AdminController::class, 'rejectTenantApplication'])->name('admin.tenant-applications.reject');
+    });
+
+// Tenant Routes (only accessible from tenant domains)
+Route::middleware(['auth', \App\Http\Middleware\TenantMiddleware::class])
+    ->prefix('admin')
+    ->group(function () {
+        Route::get('/tenant-dashboard', [TenantApplicationController::class, 'adminDashboard'])->name('tenant.admin.dashboard');
+        Route::get('/backup', [TenantApplicationController::class, 'requestBackup'])->name('tenant.backup');
+    });
 
 // Tenant Application Routes
 Route::get('/tenant-application', [TenantApplicationController::class, 'showApplicationForm'])->name('tenant.application');

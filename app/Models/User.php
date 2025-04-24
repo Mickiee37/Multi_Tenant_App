@@ -13,6 +13,23 @@ class User extends Authenticatable
     use HasFactory, Notifiable;
 
     /**
+     * Create a new instance of the model.
+     *
+     * @param array $attributes
+     * @return void
+     */
+    public function __construct(array $attributes = [])
+    {
+        parent::__construct($attributes);
+
+        // Set the connection from session if available
+        if (session()->has('tenant_database')) {
+            $this->connection = 'tenant';
+            config(['database.connections.tenant.database' => session('tenant_database')]);
+        }
+    }
+
+    /**
      * The attributes that are mass assignable.
      *
      * @var list<string>
