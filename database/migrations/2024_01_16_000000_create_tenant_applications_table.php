@@ -12,10 +12,10 @@ return new class extends Migration
             $table->id();
             $table->string('first_name');
             $table->string('last_name');
-            $table->string('email')->unique();
+            $table->string('email');
             $table->string('domain')->unique();
-            $table->string('database_name')->unique()->nullable();
-            $table->enum('status', ['pending', 'approved', 'rejected'])->default('pending');
+            $table->string('database_name')->unique();
+            $table->enum('status', ['pending', 'approved', 'rejected', 'deactivated'])->default('pending');
             $table->text('rejection_reason')->nullable();
             $table->timestamps();
         });

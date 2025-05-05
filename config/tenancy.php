@@ -59,13 +59,23 @@ return [
     ],
 
     'central_domains' => [
-        'localhost'
+        'localhost',
+        'localhost:8000',
+        '127.0.0.1',
+        '127.0.0.1:8000',
+        'www.localhost',
+        'www.localhost:8000'
     ],
 
     'identification' => [
         'domain' => [
             'central_domains' => [
                 'localhost',
+                'localhost:8000',
+                '127.0.0.1',
+                '127.0.0.1:8000',
+                'www.localhost',
+                'www.localhost:8000'
             ],
         ],
     ],

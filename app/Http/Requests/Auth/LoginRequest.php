@@ -45,114 +45,133 @@ class LoginRequest extends FormRequest
     {
         $this->ensureIsNotRateLimited();
 
-        // Get the current host and extract domain
+        // Get the current host
         $host = request()->getHost();
-        $domain = str_replace('.localhost:8000', '', $host);
-        $domain = str_replace('.localhost', '', $domain);
+        
+        // Check if this is a central domain
+        $centralDomains = config('tenancy.central_domains', ['localhost', '127.0.0.1', 'localhost:8000']);
+        $isCentralDomain = in_array($host, $centralDomains);
 
-        Log::info('Authentication attempt', [
+        Log::info('Authentication attempt details', [
             'host' => $host,
-            'domain' => $domain,
-            'email' => $this->email
+            'is_central_domain' => $isCentralDomain,
+            'email' => $this->email,
+            'central_domains' => $centralDomains
         ]);
 
         try {
-            // Find tenant by domain
-            DB::setDefaultConnection('mysql');
-            $tenant = DB::table('tenants')->where('domain', $domain)->first();
-            
-            Log::info('Tenant lookup result', [
-                'tenant_found' => !is_null($tenant),
-                'domain' => $domain,
-                'database' => $tenant ? $tenant->database : null
-            ]);
-
-            if (!$tenant) {
-                RateLimiter::hit($this->throttleKey());
-                throw ValidationException::withMessages([
-                    'email' => 'Invalid tenant domain.',
+            if ($isCentralDomain) {
+                // Central domain login
+                if (!Auth::attempt($this->only('email', 'password'))) {
+                    RateLimiter::hit($this->throttleKey());
+                    throw ValidationException::withMessages([
+                        'email' => 'Invalid credentials.',
+                    ]);
+                }
+            } else {
+                // First, check if the tenant exists
+                DB::setDefaultConnection('mysql');
+                
+                // Debug: Log all tenants and their domains
+                $allTenants = DB::table('tenants')->get();
+                Log::info('All registered tenants:', [
+                    'tenants' => $allTenants->map(function($t) {
+                        return ['id' => $t->id, 'domain' => $t->domain];
+                    })
                 ]);
-            }
-
-            // Store tenant database in session first
-            session(['tenant_database' => $tenant->database]);
-
-            // Configure and switch to tenant database
-            Config::set('database.connections.tenant.database', $tenant->database);
-            DB::purge('tenant');
-            DB::reconnect('tenant');
-            DB::setDefaultConnection('tenant');
-
-            // Get user from tenant database
-            $user = DB::connection('tenant')->table('users')
-                ->where('email', $this->email)
-                ->first();
-
-            Log::info('User lookup result', [
-                'user_found' => !is_null($user),
-                'email' => $this->email,
-                'database' => $tenant->database
-            ]);
-
-            if (!$user) {
-                RateLimiter::hit($this->throttleKey());
-                throw ValidationException::withMessages([
-                    'email' => 'User not found.',
+                
+                // Try to find tenant by domain, with and without port
+                $tenant = DB::table('tenants')
+                    ->where('domain', $host)
+                    ->first();
+                
+                Log::info('Tenant lookup details', [
+                    'searched_host' => $host,
+                    'tenant_found' => !is_null($tenant),
+                    'tenant_details' => $tenant,
+                    'sql' => DB::getQueryLog()
                 ]);
-            }
 
-            // Verify password
-            if (!Hash::check($this->password, $user->password)) {
-                RateLimiter::hit($this->throttleKey());
-                Log::warning('Password verification failed', [
-                    'email' => $this->email,
+                if (!$tenant) {
+                    RateLimiter::hit($this->throttleKey());
+                    throw ValidationException::withMessages([
+                        'email' => 'Invalid tenant domain. Please make sure you are using the correct URL.',
+                    ]);
+                }
+
+                // Store tenant database in session
+                session(['tenant_database' => $tenant->database]);
+
+                // Configure and switch to tenant database
+                Config::set('database.connections.tenant.database', $tenant->database);
+                DB::purge('tenant');
+                DB::reconnect('tenant');
+                DB::setDefaultConnection('tenant');
+
+                Log::info('Database connection configured', [
                     'database' => $tenant->database,
-                    'provided_password' => $this->password,
-                    'stored_hash' => $user->password
+                    'connection' => config('database.connections.tenant')
                 ]);
-                throw ValidationException::withMessages([
-                    'email' => 'Invalid credentials.',
-                ]);
-            }
 
-            // Create a new user instance for Auth
-            $userModel = new \App\Models\User();
-            $userModel->setConnection('tenant'); // Explicitly set connection
-            $userModel->forceFill([
-                'id' => $user->id,
-                'name' => $user->name,
-                'email' => $user->email,
-                'password' => $user->password,
-                'is_admin' => $user->is_admin
-            ]);
-            
-            // Login the user
-            Auth::login($userModel);
+                // Get user from tenant database
+                $user = DB::connection('tenant')->table('users')
+                    ->where('email', $this->email)
+                    ->first();
+
+                Log::info('User lookup result', [
+                    'user_found' => !is_null($user),
+                    'email' => $this->email,
+                    'database' => $tenant->database
+                ]);
+
+                if (!$user || !Hash::check($this->password, $user->password)) {
+                    RateLimiter::hit($this->throttleKey());
+                    throw ValidationException::withMessages([
+                        'email' => 'Invalid credentials.',
+                    ]);
+                }
+
+                // Create a new user instance for Auth
+                $userModel = new \App\Models\User();
+                $userModel->setConnection('tenant');
+                $userModel->forceFill([
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'email' => $user->email,
+                    'password' => $user->password,
+                    'is_admin' => $user->is_admin
+                ]);
+                
+                // Login the user
+                Auth::login($userModel);
+            }
 
             Log::info('Authentication successful', [
                 'email' => $this->email,
-                'database' => $tenant->database,
-                'user_id' => $user->id,
+                'is_central_domain' => $isCentralDomain,
                 'is_logged_in' => Auth::check(),
-                'current_connection' => DB::getDefaultConnection(),
-                'session_database' => session('tenant_database')
+                'current_connection' => DB::getDefaultConnection()
             ]);
             
             RateLimiter::clear($this->throttleKey());
 
         } catch (ValidationException $e) {
+            Log::error('Validation error during authentication', [
+                'error' => $e->getMessage(),
+                'host' => $host,
+                'email' => $this->email
+            ]);
             throw $e;
         } catch (\Exception $e) {
             Log::error('Authentication error', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
-                'domain' => $domain,
+                'host' => $host,
                 'email' => $this->email,
-                'current_connection' => DB::getDefaultConnection(),
-                'session_database' => session('tenant_database')
+                'current_connection' => DB::getDefaultConnection()
             ]);
             throw ValidationException::withMessages([
-                'email' => 'Authentication error occurred. Please check your credentials and try again.',
+                'email' => 'Authentication error occurred: ' . $e->getMessage(),
             ]);
         }
     }

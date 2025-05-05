@@ -1,10 +1,6 @@
-<x-app-layout>
-    <x-slot name="header">
-        <h2 class="font-semibold text-xl text-gray-800 leading-tight">
-            {{ __('Tenant Applications') }}
-        </h2>
-    </x-slot>
+@extends('layouts.app')
 
+@section('content')
     <div class="py-12">
         <div class="max-w-7xl mx-auto sm:px-6 lg:px-8">
             <div class="bg-white overflow-hidden shadow-sm sm:rounded-lg">
@@ -39,7 +35,7 @@
                                 </tr>
                             </thead>
                             <tbody class="bg-white divide-y divide-gray-200">
-                                @foreach($applications as $application)
+                                @forelse($applications as $application)
                                     <tr>
                                         <td class="px-6 py-4 whitespace-nowrap">
                                             {{ $application->first_name }} {{ $application->last_name }}
@@ -54,7 +50,8 @@
                                             <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
                                                 {{ $application->status === 'approved' ? 'bg-green-100 text-green-800' : '' }}
                                                 {{ $application->status === 'pending' ? 'bg-yellow-100 text-yellow-800' : '' }}
-                                                {{ $application->status === 'rejected' ? 'bg-red-100 text-red-800' : '' }}">
+                                                {{ $application->status === 'rejected' ? 'bg-red-100 text-red-800' : '' }}
+                                                {{ $application->status === 'deactivated' ? 'bg-gray-100 text-gray-800' : '' }}">
                                                 {{ ucfirst($application->status) }}
                                             </span>
                                         </td>
@@ -62,13 +59,44 @@
                                             @if($application->status === 'pending')
                                                 <form action="{{ route('admin.tenant-applications.approve', $application->id) }}" method="POST" class="inline">
                                                     @csrf
-                                                    <button type="submit" class="text-green-600 hover:text-green-900 mr-3">Approve</button>
+                                                    <button type="submit" class="bg-green-500 hover:bg-green-700 text-white font-bold py-1 px-3 rounded mr-2">
+                                                        Approve
+                                                    </button>
                                                 </form>
-                                                <button onclick="showRejectModal({{ $application->id }})" class="text-red-600 hover:text-red-900">Reject</button>
+                                                
+                                                <button onclick="showRejectModal({{ $application->id }})" 
+                                                    class="bg-red-500 hover:bg-red-700 text-white font-bold py-1 px-3 rounded">
+                                                    Reject
+                                                </button>
+                                            @endif
+                                            @if($application->status === 'approved')
+                                                @php
+                                                    $tenantId = $application->tenant?->id;
+                                                    \Log::info('Tenant data:', [
+                                                        'application_id' => $application->id,
+                                                        'tenant' => $application->tenant,
+                                                        'tenant_id' => $tenantId
+                                                    ]);
+                                                @endphp
+                                                @if($tenantId)
+                                                    <form action="{{ route('admin.tenant.deactivate', ['id' => $tenantId]) }}" method="POST" class="inline" onsubmit="return confirm('Are you sure you want to deactivate this tenant? This will prevent them from accessing their account.');">
+                                                        @csrf
+                                                        <button type="submit" class="text-red-600 hover:text-red-900">Deactivate</button>
+                                                    </form>
+                                                @else
+                                                    <span class="text-red-600">Unable to deactivate - No tenant ID found</span>
+                                                @endif
+                                                <a href="http://{{ $application->domain }}.localhost:8000" target="_blank" class="text-blue-600 hover:text-blue-900 ml-3">Visit Site</a>
                                             @endif
                                         </td>
                                     </tr>
-                                @endforeach
+                                @empty
+                                    <tr>
+                                        <td colspan="5" class="px-6 py-4 text-center text-gray-500">
+                                            No tenant applications found
+                                        </td>
+                                    </tr>
+                                @endforelse
                             </tbody>
                         </table>
                     </div>
@@ -92,7 +120,10 @@
                                     Reject Application
                                 </h3>
                                 <div class="mt-2">
-                                    <textarea name="rejection_reason" rows="3" class="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 mt-1 block w-full sm:text-sm border border-gray-300 rounded-md" placeholder="Enter reason for rejection"></textarea>
+                                    <textarea name="rejection_reason" 
+                                        rows="3" 
+                                        class="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 mt-1 block w-full sm:text-sm border border-gray-300 rounded-md" 
+                                        placeholder="Enter reason for rejection (optional)"></textarea>
                                 </div>
                             </div>
                         </div>
@@ -123,4 +154,4 @@
             modal.classList.add('hidden');
         }
     </script>
-</x-app-layout> 
+@endsection

@@ -26,4 +26,9 @@ class TenantApplication extends Model
     {
         return $this->email;
     }
+
+    public function tenant()
+    {
+        return $this->hasOne(Tenant::class, 'database_name', 'database_name');
+    }
 } 

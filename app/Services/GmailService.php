@@ -72,12 +72,14 @@ class GmailService
     protected function createMessage($to, $subject, $messageText)
     {
         try {
-            $rawMessageString = "To: {$to}\r\n";
+            $rawMessageString = "From: Multi-Tenant Admin <admin@example.com>\r\n";
+            $rawMessageString .= "To: {$to}\r\n";
             $rawMessageString .= "Subject: {$subject}\r\n";
+            $rawMessageString .= "MIME-Version: 1.0\r\n";
             $rawMessageString .= "Content-Type: text/html; charset=utf-8\r\n";
             $rawMessageString .= "\r\n" . $messageText;
 
-            $rawMessage = strtr(base64_encode($rawMessageString), array('+' => '-', '/' => '_'));
+            $rawMessage = rtrim(strtr(base64_encode($rawMessageString), '+/', '-_'), '=');
             
             $message = new Message();
             $message->setRaw($rawMessage);

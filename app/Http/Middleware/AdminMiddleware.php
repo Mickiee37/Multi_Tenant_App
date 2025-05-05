@@ -16,7 +16,8 @@ class AdminMiddleware
     public function handle(Request $request, Closure $next): Response
     {
         if (!auth()->check() || !auth()->user()->is_admin) {
-            return redirect()->route('dashboard')->with('error', 'Unauthorized access.');
+            return redirect()->route('dashboard')
+                ->with('error', 'Access denied. You must be an administrator to access this area.');
         }
 
         return $next($request);

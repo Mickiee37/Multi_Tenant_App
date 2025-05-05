@@ -11,6 +11,9 @@ use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
+use App\Models\Product;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Schema;
 
 class TenantApplicationController extends Controller
 {
@@ -37,38 +40,44 @@ class TenantApplicationController extends Controller
             'domain' => 'required|string|max:255|unique:tenants,domain|regex:/^[a-z0-9-]+$/',
         ]);
 
-        // Generate a unique database name
-        $databaseName = 'tenant_' . Str::slug($request->domain) . '_' . Str::random(8);
+        // Generate a unique tenant ID that will be used for both tenant ID and database name
+        $tenantId = 'tenant_' . Str::slug($request->domain) . '_' . Str::random(8);
+        $databaseName = $tenantId;  // Use the same ID for database name
 
         // Create tenant application
         $application = TenantApplication::create([
             'first_name' => $request->first_name,
             'last_name' => $request->last_name,
             'email' => $request->email,
-            'domain' => $request->domain,
+            'domain' => strtolower($request->domain),
             'database_name' => $databaseName,
             'status' => 'pending'
         ]);
 
         // Send confirmation email
         try {
-            $emailContent = "
-                <h2>Thank you for your application!</h2>
-                <p>Dear {$request->first_name},</p>
-                <p>We have received your tenant application. Our admin team will review it shortly.</p>
-                <p>Your requested domain: {$request->domain}.localhost</p>
-                <p>We will notify you once your application has been processed.</p>
-                <br>
-                <p>Best regards,<br>Your Multi-Tenant Team</p>
-            ";
+            $emailContent = view('emails.tenant-application-received')
+                ->with([
+                    'name' => $request->first_name . ' ' . $request->last_name,
+                    'company' => $request->domain,
+                ])
+                ->render();
 
             $this->gmailService->sendEmail(
                 $request->email,
                 'Tenant Application Received',
                 $emailContent
             );
+
+            \Log::info('Confirmation email sent successfully', [
+                'email' => $request->email,
+                'domain' => $request->domain
+            ]);
         } catch (\Exception $e) {
-            Log::error('Failed to send confirmation email: ' . $e->getMessage());
+            \Log::error('Failed to send confirmation email: ' . $e->getMessage(), [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
         }
 
         return redirect()->route('tenant.register.success')
@@ -77,130 +86,91 @@ class TenantApplicationController extends Controller
 
     public function approve(TenantApplication $application)
     {
-        \Log::info('Approve method called', ['application_id' => $application->id]);
+        \Log::info('Starting tenant approval process', ['application_id' => $application->id]);
 
-        // Check if application is already approved
         if ($application->status === 'approved') {
             return back()->with('error', 'Application is already approved.');
         }
 
         try {
-            // Ensure we're using the main database for tenant application updates
-            DB::setDefaultConnection('mysql');
             DB::beginTransaction();
 
-            // Validate application has required fields
-            if (!$application->domain || !$application->email) {
-                throw new \Exception('Application missing required fields (domain or email)');
-            }
-
-            // Check if tenant exists and delete if it does
-            if (Tenant::find($application->domain)) {
-                \Log::info('Deleting existing tenant', ['domain' => $application->domain]);
-                Tenant::find($application->domain)->delete();
-            }
-
-            \Log::info('Generating password and creating tenant');
+            // 1. Create the tenant first (ensure database name is lowercase)
+            $dbName = strtolower($application->database_name);
+            $generatedPassword = Str::random(12);
+            $now = now()->format('Y-m-d H:i:s');
             
-            // Generate password for the tenant
-            $generatedPassword = Str::random(10);
-            \Log::info('Password generated', ['password' => $generatedPassword]);
+            // Include port in domain
+            $domain = strtolower($application->domain . '.localhost:8000');
+            
+            // Use the existing database name as tenant ID
+            $tenantId = $dbName;
+            
+            $tenantData = [
+                'name' => $application->first_name . ' ' . $application->last_name,
+                'email' => $application->email,
+                'password' => Hash::make($generatedPassword),
+                'domain' => $domain
+            ];
 
-            try {
-                // Create tenant record
-                $tenant = Tenant::create([
-                    'id' => $application->domain,
-                    'name' => $application->first_name . ' ' . $application->last_name,
-                    'domain' => $application->domain,
-                    'database' => $application->database_name,
-                    'data' => [
-                        'name' => $application->first_name . ' ' . $application->last_name,
-                        'domain' => $application->domain,
-                        'database' => $application->database_name,
-                        'initial_password' => $generatedPassword
-                    ]
+            // Create tenant instance first
+            $tenant = new \App\Models\Tenant();
+            $tenant->id = $tenantId;
+            $tenant->name = $tenantData['name'];
+            $tenant->domain = $domain;
+            $tenant->database = $dbName;
+            $tenant->data = $tenantData;
+            $tenant->save();
+
+            // 2. Create domain for the tenant
+            $domain = $tenant->domains()->create([
+                'domain' => $domain
+            ]);
+
+            // 3. Initialize the tenant (this will create the database)
+            $tenant->createDatabase();
+            
+            // 4. Run migrations for the tenant
+            $tenant->run(function () use ($tenant, $tenantData, $now) {
+                // Create users table
+                if (!Schema::hasTable('users')) {
+                    Schema::create('users', function ($table) {
+                        $table->id();
+                        $table->string('name');
+                        $table->string('email')->unique();
+                        $table->timestamp('email_verified_at')->nullable();
+                        $table->string('password');
+                        $table->boolean('is_admin')->default(false);
+                        $table->rememberToken();
+                        $table->timestamps();
+                    });
+                }
+
+                // Create admin user
+                DB::table('users')->insert([
+                    'name' => $tenantData['name'],
+                    'email' => $tenantData['email'],
+                    'password' => $tenantData['password'],
+                    'is_admin' => true,
+                    'created_at' => $now,
+                    'updated_at' => $now
                 ]);
+            });
 
-                // Create domain
-                $tenant->domains()->create([
-                    'domain' => $application->domain . '.localhost',
-                ]);
+            // 5. Update application status
+            $application->update([
+                'status' => 'approved',
+                'updated_at' => $now
+            ]);
 
-                // Create database directly
-                try {
-                    // Get database configuration
-                    $host = config('database.connections.mysql.host');
-                    $username = config('database.connections.mysql.username');
-                    $dbPassword = config('database.connections.mysql.password');
-
-                    // Create database using direct MySQL commands
-                    DB::unprepared("CREATE DATABASE IF NOT EXISTS `{$application->database_name}`");
-                    
-                    // Switch to the new database
-                    DB::unprepared("USE `{$application->database_name}`");
-                    
-                    // Create users table
-                    DB::unprepared("
-                        CREATE TABLE IF NOT EXISTS `users` (
-                            `id` bigint unsigned NOT NULL AUTO_INCREMENT,
-                            `name` varchar(255) NOT NULL,
-                            `email` varchar(255) NOT NULL,
-                            `email_verified_at` timestamp NULL DEFAULT NULL,
-                            `password` varchar(255) NOT NULL,
-                            `is_admin` tinyint(1) NOT NULL DEFAULT '0',
-                            `remember_token` varchar(100) DEFAULT NULL,
-                            `created_at` timestamp NULL DEFAULT NULL,
-                            `updated_at` timestamp NULL DEFAULT NULL,
-                            PRIMARY KEY (`id`),
-                            UNIQUE KEY `users_email_unique` (`email`)
-                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-                    ");
-
-                    // Create the admin user directly
-                    $hashedPassword = Hash::make($generatedPassword);
-                    $now = now()->format('Y-m-d H:i:s');
-                    
-                    \Log::info('Creating user with password', [
-                        'email' => $application->email,
-                        'password' => $generatedPassword,
-                        'hashed_password' => $hashedPassword
-                    ]);
-
-                    DB::unprepared("
-                        INSERT INTO `{$application->database_name}`.`users` 
-                        (`name`, `email`, `password`, `is_admin`, `created_at`, `updated_at`)
-                        VALUES (
-                            '{$application->first_name} {$application->last_name}',
-                            '{$application->email}',
-                            '{$hashedPassword}',
-                            1,
-                            '{$now}',
-                            '{$now}'
-                        )
-                    ");
-
-                    // Send approval email with credentials
-                    $domainUrl = 'http://' . $application->domain . '.localhost:8000';
-                    $emailContent = "
-                        <h2>Congratulations! Your Tenant Application is Approved</h2>
-                        <p>Dear {$application->first_name},</p>
-                        <p>Your tenant application has been approved. Here are your login credentials:</p>
-                        <ul style='list-style-type: none; padding: 0;'>
-                            <li><strong>Domain:</strong> {$domainUrl}</li>
-                            <li><strong>Email:</strong> {$application->email}</li>
-                            <li><strong>Password:</strong> {$generatedPassword}</li>
-                        </ul>
-                        <p style='color: red; font-weight: bold;'>Please save these credentials and change your password after your first login.</p>
-                        <p><a href='{$domainUrl}' style='display: inline-block; background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;'>Click here to access your domain</a></p>
-                        <br>
-                        <p>Best regards,<br>Your Multi-Tenant Team</p>
-                    ";
-
-                    \Log::info('Preparing to send email with credentials', [
-                        'email' => $application->email,
-                        'domain' => $domainUrl,
-                        'password' => $generatedPassword
-                    ]);
+            // 6. Send approval email with port number for the URL
+            $domainUrl = 'http://' . $tenantData['domain'] . ':8000';
+            $emailContent = view('emails.tenant-approved', [
+                'name' => $application->first_name,
+                'domain' => $domainUrl,
+                'email' => $application->email,
+                'password' => $generatedPassword
+            ])->render();
 
                     try {
                         $this->gmailService->sendEmail(
@@ -208,48 +178,30 @@ class TenantApplicationController extends Controller
                             'Tenant Application Approved - Your Login Credentials',
                             $emailContent
                         );
-                        \Log::info('Approval email sent successfully');
-                    } catch (\Exception $e) {
-                        \Log::error('Failed to send approval email', [
-                            'error' => $e->getMessage(),
-                            'email_content' => $emailContent
-                        ]);
-                        throw $e;
-                    }
-                } catch (\Exception $e) {
-                    \Log::error('Failed to create database or user', ['error' => $e->getMessage()]);
-                    throw new \Exception('Failed to create database or user: ' . $e->getMessage());
-                }
+                \Log::info('Approval email sent successfully', ['email' => $application->email]);
             } catch (\Exception $e) {
-                \Log::error('Failed to create tenant', [
+                \Log::error('Failed to send approval email', [
                     'error' => $e->getMessage(),
-                    'application' => $application->toArray()
+                    'email' => $application->email
                 ]);
-                throw new \Exception('Failed to create tenant: ' . $e->getMessage());
+                // Continue even if email fails
             }
 
-            // Update application status
-            DB::setDefaultConnection('mysql'); // Ensure we're using the main database
-            $mainDb = config('database.connections.mysql.database');
-            DB::statement("USE `{$mainDb}`");
-            DB::table('tenant_applications')
-                ->where('id', $application->id)
-                ->update([
-                    'status' => 'approved',
-                    'updated_at' => now()
-                ]);
-
             DB::commit();
-            \Log::info('Application approved successfully');
+            \Log::info('Tenant approval process completed successfully', [
+                'tenant_id' => $tenant->id,
+                'database' => $dbName
+            ]);
+
             return back()->with('success', "Application approved! Credentials have been sent to {$application->email}");
 
         } catch (\Exception $e) {
             DB::rollBack();
-            \Log::error('Error in approval process', [
+            \Log::error('Tenant approval process failed', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-            return back()->with('error', $e->getMessage())->withInput();
+            return back()->with('error', 'Failed to approve tenant application: ' . $e->getMessage());
         }
     }
 
@@ -283,17 +235,235 @@ class TenantApplicationController extends Controller
 
     public function adminDashboard()
     {
-        // Get the current tenant's domain from the request
-        $host = request()->getHost();
-        $domain = str_replace('.localhost:8000', '', $host);
-        $domain = str_replace('.localhost', '', $domain);
+        try {
+            // Get the current tenant
+            $tenant = tenant();
+            
+            if (!$tenant) {
+                \Log::error('No tenant found for request');
+                return redirect()->route('login')->with('error', 'Tenant not found');
+            }
 
-        // Get applications only for the current tenant
-        $applications = TenantApplication::where('domain', $domain)->get();
+            // Configure tenant connection
+            config(['database.connections.tenant.database' => $tenant->database]);
+            DB::purge('tenant');
+            DB::reconnect('tenant');
+            
+            // Create products table if it doesn't exist
+            if (!Schema::connection('tenant')->hasTable('products')) {
+                Schema::connection('tenant')->create('products', function ($table) {
+                    $table->id();
+                    $table->string('name');
+                    $table->decimal('price', 10, 2);
+                    $table->text('description')->nullable();
+                    $table->string('image')->nullable();
+                    $table->timestamps();
+                });
+            } else {
+                // Check if image column exists, if not add it
+                if (!Schema::connection('tenant')->hasColumn('products', 'image')) {
+                    Schema::connection('tenant')->table('products', function ($table) {
+                        $table->string('image')->nullable();
+                    });
+                }
+            }
+            
+            // Get products from tenant database
+            $products = DB::connection('tenant')->table('products')->get();
+            
+            \Log::info('Loading admin dashboard', [
+                'tenant_id' => $tenant->id,
+                'database' => $tenant->database,
+                'products_count' => $products->count()
+            ]);
 
-        return view('admin.tenant-applications', [
-            'applications' => $applications
+            return view('tenant.dashboard', compact('products'));
+        } catch (\Exception $e) {
+            \Log::error('Error in admin dashboard', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return redirect()->route('login')->with('error', 'Error loading dashboard: ' . $e->getMessage());
+        }
+    }
+
+    private function getTenantFromDomain()
+    {
+        // Get the current host and ensure it's lowercase
+        $host = strtolower(request()->getHost());
+        
+        // Find tenant by full domain including .localhost:8000
+        $tenant = DB::connection('mysql')->table('tenants')
+            ->where('domain', $host)
+            ->first();
+        
+        if (!$tenant) {
+            abort(404, 'Tenant not found');
+        }
+        
+        return $tenant;
+    }
+
+    public function storeProduct(Request $request)
+    {
+        try {
+            $tenant = tenant();
+            
+            if (!$tenant) {
+                \Log::error('No tenant found for request');
+                return redirect()->route('login')->with('error', 'Tenant not found');
+            }
+
+            // Configure tenant connection
+            config(['database.connections.tenant.database' => $tenant->database]);
+            DB::purge('tenant');
+            DB::reconnect('tenant');
+
+            $validated = $request->validate([
+                'name' => 'required|string|max:255',
+                'price' => 'required|numeric|min:0',
+                'description' => 'nullable|string',
+                'image' => 'required|image|mimes:jpeg,png,jpg,gif|max:2048'
+            ]);
+
+            if ($request->hasFile('image')) {
+                $imagePath = $request->file('image')->store('products', 'public');
+                
+                \Log::info('Storing product in tenant database', [
+                    'tenant_id' => $tenant->id,
+                    'database' => $tenant->database,
+                    'image_path' => $imagePath
+                ]);
+
+                // Insert into tenant database
+                DB::connection('tenant')->table('products')->insert([
+                    'name' => $validated['name'],
+                    'price' => $validated['price'],
+                    'description' => $validated['description'],
+                    'image' => $imagePath,
+                    'created_at' => now(),
+                    'updated_at' => now()
+                ]);
+
+                return redirect()->route('tenant.admin.dashboard')
+                    ->with('success', 'Product added successfully');
+            }
+
+            return redirect()->back()->with('error', 'Image upload failed');
+        } catch (\Exception $e) {
+            \Log::error('Error storing product', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return redirect()->back()->with('error', 'Error adding product: ' . $e->getMessage());
+        }
+    }
+
+    public function editProduct($id)
+    {
+        $tenant = $this->getTenantFromDomain();
+        
+        if (!$tenant) {
+            return redirect()->route('home')->with('error', 'Invalid tenant');
+        }
+
+        // Configure tenant connection
+        config(['database.connections.tenant.database' => $tenant->database]);
+        DB::purge('tenant');
+        DB::reconnect('tenant');
+
+        // Get product from tenant database
+        $product = DB::connection('tenant')->table('products')->where('id', $id)->first();
+        
+        if (!$product) {
+            return response()->json(['error' => 'Product not found'], 404);
+        }
+
+        return response()->json($product);
+    }
+
+    public function updateProduct(Request $request, $id)
+    {
+        $tenant = $this->getTenantFromDomain();
+        
+        if (!$tenant) {
+            return redirect()->route('home')->with('error', 'Invalid tenant');
+        }
+
+        // Configure tenant connection
+        config(['database.connections.tenant.database' => $tenant->database]);
+        DB::purge('tenant');
+        DB::reconnect('tenant');
+
+        // Get product from tenant database
+        $product = DB::connection('tenant')->table('products')->where('id', $id)->first();
+        
+        if (!$product) {
+            return redirect()->back()->with('error', 'Product not found');
+        }
+
+        $validated = $request->validate([
+            'name' => 'required|string|max:255',
+            'price' => 'required|numeric|min:0',
+            'description' => 'nullable|string',
+            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048'
         ]);
+
+        $updateData = [
+            'name' => $validated['name'],
+            'price' => $validated['price'],
+            'description' => $validated['description'],
+            'updated_at' => now()
+        ];
+
+        if ($request->hasFile('image')) {
+            // Delete old image if it exists
+            if ($product->image && Storage::disk('public')->exists($product->image)) {
+                Storage::disk('public')->delete($product->image);
+            }
+            
+            // Store new image
+            $updateData['image'] = $request->file('image')->store('products', 'public');
+        }
+
+        // Update product in tenant database
+        DB::connection('tenant')->table('products')
+            ->where('id', $id)
+            ->update($updateData);
+
+        return redirect()->route('tenant.admin.dashboard')
+            ->with('success', 'Product updated successfully');
+    }
+
+    public function deleteProduct($id)
+    {
+        $tenant = $this->getTenantFromDomain();
+        
+        if (!$tenant) {
+            return redirect()->route('home')->with('error', 'Invalid tenant');
+        }
+
+        // Configure tenant connection
+        config(['database.connections.tenant.database' => $tenant->database]);
+        DB::purge('tenant');
+        DB::reconnect('tenant');
+
+        // Get product from tenant database
+        $product = DB::connection('tenant')->table('products')->where('id', $id)->first();
+        
+        if (!$product) {
+            return response()->json(['error' => 'Product not found'], 404);
+        }
+
+        // Delete the image file if it exists
+        if ($product->image && Storage::disk('public')->exists($product->image)) {
+            Storage::disk('public')->delete($product->image);
+        }
+        
+        // Delete the product from tenant database
+        DB::connection('tenant')->table('products')->where('id', $id)->delete();
+
+        return response()->json(['message' => 'Product deleted successfully']);
     }
 
     public function requestBackup(Request $request, $tenantId)

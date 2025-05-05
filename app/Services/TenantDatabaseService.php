@@ -15,7 +15,8 @@ class TenantDatabaseService
         'password_reset_tokens',
         'migrations',
         'failed_jobs',
-        'personal_access_tokens'
+        'personal_access_tokens',
+        'products'
     ];
 
     public function createDatabase($tenantId, $databaseName)
@@ -175,6 +176,20 @@ class TenantDatabaseService
                         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                     ");
                     break;
+
+                case 'products':
+                    DB::connection('tenant')->unprepared("
+                        CREATE TABLE IF NOT EXISTS `products` (
+                            `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+                            `name` varchar(255) NOT NULL,
+                            `description` text,
+                            `price` decimal(10,2) NOT NULL,
+                            `created_at` timestamp NULL DEFAULT NULL,
+                            `updated_at` timestamp NULL DEFAULT NULL,
+                            PRIMARY KEY (`id`)
+                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                    ");
+                    break;
             }
         } catch (\Exception $e) {
             \Log::error("Failed to create table {$tableName}", [
@@ -187,13 +202,35 @@ class TenantDatabaseService
 
     protected function createTenantTables()
     {
-        // Skip sessions table as it's already created
-        $tables = array_filter($this->requiredTables, function($table) {
-            return $table !== 'sessions';
-        });
+        try {
+            // Create each required table
+            foreach ($this->requiredTables as $table) {
+                if (!Schema::connection('tenant')->hasTable($table)) {
+                    $this->createSpecificTable($table);
+                    
+                    // Verify table was created
+                    if (!Schema::connection('tenant')->hasTable($table)) {
+                        throw new \Exception("Failed to create table: {$table}");
+                    }
+                }
+            }
 
-        foreach ($tables as $table) {
-            $this->createSpecificTable($table);
+            // Verify all required tables exist
+            $missingTables = array_filter($this->requiredTables, function($table) {
+                return !Schema::connection('tenant')->hasTable($table);
+            });
+
+            if (!empty($missingTables)) {
+                throw new \Exception('Missing required tables: ' . implode(', ', $missingTables));
+            }
+
+            return true;
+        } catch (\Exception $e) {
+            \Log::error('Failed to create tenant tables', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            throw $e;
         }
     }
 
@@ -226,5 +263,41 @@ class TenantDatabaseService
         exec($command);
 
         return $filename;
+    }
+
+    private function createTables(string $database): void
+    {
+        DB::statement("USE `{$database}`");
+
+        // Create users table
+        DB::unprepared("
+            CREATE TABLE IF NOT EXISTS `users` (
+                `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+                `name` varchar(255) NOT NULL,
+                `email` varchar(255) NOT NULL,
+                `email_verified_at` timestamp NULL DEFAULT NULL,
+                `password` varchar(255) NOT NULL,
+                `is_admin` tinyint(1) NOT NULL DEFAULT '0',
+                `remember_token` varchar(100) DEFAULT NULL,
+                `created_at` timestamp NULL DEFAULT NULL,
+                `updated_at` timestamp NULL DEFAULT NULL,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `users_email_unique` (`email`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Create products table
+        DB::unprepared("
+            CREATE TABLE IF NOT EXISTS `products` (
+                `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+                `name` varchar(255) NOT NULL,
+                `price` decimal(10,2) NOT NULL,
+                `description` text,
+                `image` varchar(255) NOT NULL,
+                `created_at` timestamp NULL DEFAULT NULL,
+                `updated_at` timestamp NULL DEFAULT NULL,
+                PRIMARY KEY (`id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
     }
 }

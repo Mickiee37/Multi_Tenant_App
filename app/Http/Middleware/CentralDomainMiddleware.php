@@ -4,17 +4,22 @@ namespace App\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class CentralDomainMiddleware
 {
     public function handle(Request $request, Closure $next)
     {
-        $host = $request->getHost();
-        
-        // Check if we're on the central domain (should be just localhost:8000)
-        // If there's a subdomain (like kanga.localhost), deny access
-        if (strpos($host, '.localhost') !== false) {
-            abort(403, 'Access denied. This section is only accessible from the central domain.');
+        // If tenant() helper returns true, we're on a tenant domain
+        if (tenant()) {
+            Log::warning('Tenant attempting to access central domain route', [
+                'path' => $request->path(),
+                'host' => $request->getHost(),
+                'tenant_id' => tenant()->id
+            ]);
+            
+            // Redirect tenant users to their dashboard
+            return redirect('/admin/tenant-dashboard');
         }
 
         return $next($request);

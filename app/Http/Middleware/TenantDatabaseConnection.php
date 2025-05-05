@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\Response;
 use Illuminate\Support\Facades\Session;
+use Illuminate\Support\Facades\Auth;
 use App\Models\Tenant;
 
 class TenantDatabaseConnection
@@ -17,51 +18,62 @@ class TenantDatabaseConnection
         // Get the main database name from config
         $mainDatabase = config('database.connections.mysql.database');
         
-        // Force the session configuration to use main database
-        Config::set('session.connection', 'mysql');
-        Config::set('session.driver', 'database');
-        Config::set('session.table', $mainDatabase . '.sessions');
+        \Log::info('TenantDatabaseConnection middleware starting', [
+            'request_path' => $request->path(),
+            'main_database' => $mainDatabase,
+            'is_authenticated' => Auth::check(),
+            'session_id' => session()->getId()
+        ]);
 
-        // First try to get tenant from domain
+        // Parse domain from host
         $host = $request->getHost();
-        $domain = str_replace('.localhost:8000', '', $host);
-        $domain = str_replace('.localhost', '', $domain);
+        $domain = $host;
+        
+        // Skip tenant lookup for specific routes
+        if ($request->is('login') || $request->is('logout') || $request->is('_ignition/*')) {
+            return $next($request);
+        }
         
         // Find tenant by domain
         $tenant = null;
         try {
+            // Always use main connection for tenant lookup
             DB::setDefaultConnection('mysql');
-            $tenant = DB::table('tenants')->where('domain', $domain)->first();
+            
+            // Try to find tenant by exact domain
+            $tenant = DB::table('tenants')
+                ->where('domain', $domain)
+                ->first();
+            
+            \Log::info('Tenant lookup result', [
+                'found' => $tenant !== null,
+                'tenant_id' => $tenant ? $tenant->id : null,
+                'database' => $tenant ? $tenant->database : null,
+                'searched_domain' => $domain,
+                'session_id' => session()->getId()
+            ]);
         } catch (\Exception $e) {
-            \Log::error('Error finding tenant', ['error' => $e->getMessage(), 'domain' => $domain]);
+            \Log::error('Error finding tenant', [
+                'error' => $e->getMessage(),
+                'domain' => $domain,
+                'host' => $host
+            ]);
+            return $next($request);
         }
 
-        $tenantDatabase = null;
         if ($tenant) {
             $tenantDatabase = $tenant->database;
             
-            // Store tenant database in session
-            $sessionId = Session::getId();
-            try {
-                DB::table($mainDatabase . '.sessions')
-                    ->where('id', $sessionId)
-                    ->update(['tenant_database' => $tenantDatabase]);
-            } catch (\Exception $e) {
-                \Log::error('Error storing tenant in session', ['error' => $e->getMessage()]);
-            }
-        } else {
-            // If no tenant found by domain, try session as fallback
-            $sessionId = Session::getId();
-            try {
-                $tenantDatabase = DB::table($mainDatabase . '.sessions')
-                    ->where('id', $sessionId)
-                    ->value('tenant_database');
-            } catch (\Exception $e) {
-                \Log::error('Error getting tenant from session', ['error' => $e->getMessage()]);
-            }
-        }
-
-        if ($tenantDatabase) {
+            // Store tenant info in session
+            $request->session()->put('tenant_id', $tenant->id);
+            $request->session()->put('tenant_database', $tenantDatabase);
+            
+            \Log::info('Configuring tenant connection', [
+                'database' => $tenantDatabase,
+                'session_id' => session()->getId(),
+                'tenant_id' => $tenant->id
+            ]);
+            
             // Configure tenant connection
             Config::set('database.connections.tenant', [
                 'driver' => 'mysql',
@@ -74,32 +86,56 @@ class TenantDatabaseConnection
                 'prefix' => '',
             ]);
 
-            // Switch to tenant connection for non-session operations
+            // Switch to tenant connection
             DB::purge('tenant');
             DB::reconnect('tenant');
-            Config::set('database.default', 'tenant');
-            DB::setDefaultConnection('tenant');
+            
+            // Configure session to use main database
+            Config::set('session.connection', 'mysql');
+            Config::set('session.driver', 'database');
+            Config::set('session.table', $mainDatabase . '.sessions');
+            
+            // Set auth provider to use tenant connection
+            Config::set('auth.providers.users.connection', 'tenant');
+            
+            \Log::info('Tenant connection configured', [
+                'database' => $tenantDatabase,
+                'auth_connection' => config('auth.providers.users.connection'),
+                'session_connection' => config('session.connection'),
+                'session_id' => session()->getId()
+            ]);
+
+            // Share tenant information with all views
+            view()->share('current_tenant', $tenant);
         }
 
         try {
-            // Before executing the request, ensure session operations use main database
-            DB::statement("USE `{$mainDatabase}`");
-            
-            // Execute the request
             $response = $next($request);
             
-            // After request, switch back to main database for session operations
-            DB::statement("USE `{$mainDatabase}`");
+            // Log redirect information if present
+            if ($response->headers->has('Location')) {
+                \Log::info('Redirect detected', [
+                    'from' => $request->url(),
+                    'to' => $response->headers->get('Location'),
+                    'session_id' => session()->getId(),
+                    'tenant_id' => session('tenant_id')
+                ]);
+            }
             
             return $response;
         } catch (\Exception $e) {
-            // On error, ensure we're using main database
-            DB::statement("USE `{$mainDatabase}`");
+            \Log::error('Error in middleware', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'session_id' => session()->getId()
+            ]);
             throw $e;
         } finally {
-            // Always ensure we end up using the main database
-            DB::statement("USE `{$mainDatabase}`");
-            Config::set('database.default', 'mysql');
+            // Reset connections for next request
+            if (tenant()) {
+                DB::purge('tenant');
+            }
+            DB::purge('mysql');
             DB::setDefaultConnection('mysql');
         }
     }
