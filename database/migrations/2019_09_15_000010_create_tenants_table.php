@@ -20,6 +20,7 @@ class CreateTenantsTable extends Migration
             $table->string('name');
             $table->string('domain')->unique();
             $table->string('database');
+            $table->string('database_name')->unique();
             $table->timestamps();
             $table->json('data')->nullable();
         });

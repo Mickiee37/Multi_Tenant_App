@@ -18,18 +18,45 @@ class TenancyServiceProvider extends ServiceProvider
     // By default, no namespace is used to support the callable array syntax.
     public static string $controllerNamespace = '';
 
-    public function events()
+    public function register()
     {
-        return [
+        //
+    }
+
+    public function boot()
+    {
+        $this->bootEvents();
+        $this->mapRoutes();
+
+        $this->makeTenancyMiddlewareHighestPriority();
+    }
+
+    protected function bootEvents()
+    {
+        $events = [
             // Tenant events
             Events\CreatingTenant::class => [],
-            Events\TenantCreated::class => [],
+            Events\TenantCreated::class => [
+                JobPipeline::make([
+                    Jobs\CreateDatabase::class,
+                    Jobs\MigrateDatabase::class,
+                    // Jobs\SeedDatabase::class,
+                ])->send(function (Events\TenantCreated $event) {
+                    return $event->tenant;
+                })->shouldBeQueued(false),
+            ],
             Events\SavingTenant::class => [],
             Events\TenantSaved::class => [],
             Events\UpdatingTenant::class => [],
             Events\TenantUpdated::class => [],
             Events\DeletingTenant::class => [],
-            Events\TenantDeleted::class => [],
+            Events\TenantDeleted::class => [
+                JobPipeline::make([
+                    Jobs\DeleteDatabase::class,
+                ])->send(function (Events\TenantDeleted $event) {
+                    return $event->tenant;
+                })->shouldBeQueued(false),
+            ],
 
             // Domain events
             Events\CreatingDomain::class => [],
@@ -51,43 +78,11 @@ class TenancyServiceProvider extends ServiceProvider
             // Tenancy events
             Events\InitializingTenancy::class => [],
             Events\TenancyInitialized::class => [],
-
             Events\EndingTenancy::class => [],
-            Events\TenancyEnded::class => [
-                Listeners\RevertToCentralContext::class,
-            ],
-
-            Events\BootstrappingTenancy::class => [],
-            Events\TenancyBootstrapped::class => [],
-            Events\RevertingToCentralContext::class => [],
-            Events\RevertedToCentralContext::class => [],
-
-            // Resource syncing
-            Events\SyncedResourceSaved::class => [
-                Listeners\UpdateSyncedResource::class,
-            ],
-
-            // Fired only when a synced resource is changed in a different DB than the origin DB (to avoid infinite loops)
-            Events\SyncedResourceChangedInForeignDatabase::class => [],
+            Events\TenancyEnded::class => [],
         ];
-    }
 
-    public function register()
-    {
-        //
-    }
-
-    public function boot()
-    {
-        $this->bootEvents();
-        $this->mapRoutes();
-
-        $this->makeTenancyMiddlewareHighestPriority();
-    }
-
-    protected function bootEvents()
-    {
-        foreach ($this->events() as $event => $listeners) {
+        foreach ($events as $event => $listeners) {
             foreach ($listeners as $listener) {
                 if ($listener instanceof JobPipeline) {
                     $listener = $listener->toListener();
@@ -100,12 +95,15 @@ class TenancyServiceProvider extends ServiceProvider
 
     protected function mapRoutes()
     {
-        $this->app->booted(function () {
             if (file_exists(base_path('routes/tenant.php'))) {
-                Route::namespace(static::$controllerNamespace)
-                    ->group(base_path('routes/tenant.php'));
+            Route::middleware([
+                'web',
+                Middleware\InitializeTenancyByDomain::class,
+                Middleware\PreventAccessFromCentralDomains::class,
+            ])->group(function () {
+                require base_path('routes/tenant.php');
+            });
             }
-        });
     }
 
     protected function makeTenancyMiddlewareHighestPriority()
@@ -113,12 +111,7 @@ class TenancyServiceProvider extends ServiceProvider
         $tenancyMiddleware = [
             // Even higher priority than the initialization middleware
             Middleware\PreventAccessFromCentralDomains::class,
-
             Middleware\InitializeTenancyByDomain::class,
-            Middleware\InitializeTenancyBySubdomain::class,
-            Middleware\InitializeTenancyByDomainOrSubdomain::class,
-            Middleware\InitializeTenancyByPath::class,
-            Middleware\InitializeTenancyByRequestData::class,
         ];
 
         foreach (array_reverse($tenancyMiddleware) as $middleware) {

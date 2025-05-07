@@ -92,9 +92,9 @@ class AdminController extends Controller
                 // Ensure we're on the main database connection
                 DB::setDefaultConnection('mysql');
                 
-                // Generate database name
+                // Use the database name from the application
                 $tenantDomain = $application->domain;
-                $databaseName = 'tenant_' . $application->domain . '_' . Str::random(8);
+                $databaseName = $application->database_name;
 
                 // Step 1: Create the tenant database and its tables first (outside transaction)
                 $this->tenantDatabaseService->createDatabase($application->domain, $databaseName);
@@ -105,7 +105,7 @@ class AdminController extends Controller
                 try {
                     // Insert tenant record
                     DB::table('tenants')->insert([
-                        'id' => $application->domain,
+                        'id' => $databaseName, // Use database_name as tenant ID for consistency
                         'name' => $application->first_name . ' ' . $application->last_name,
                         'domain' => $tenantDomain . '.localhost',
                         'database' => $databaseName,
@@ -122,7 +122,7 @@ class AdminController extends Controller
                     // Insert domain record with proper formatting
                     DB::table('domains')->insert([
                         'domain' => $tenantDomain . '.localhost',
-                        'tenant_id' => $application->domain,
+                        'tenant_id' => $databaseName, // Use database_name as tenant ID
                         'created_at' => now(),
                         'updated_at' => now()
                     ]);

@@ -40,9 +40,8 @@ class TenantApplicationController extends Controller
             'domain' => 'required|string|max:255|unique:tenants,domain|regex:/^[a-z0-9-]+$/',
         ]);
 
-        // Generate a unique tenant ID that will be used for both tenant ID and database name
-        $tenantId = 'tenant_' . Str::slug($request->domain) . '_' . Str::random(8);
-        $databaseName = $tenantId;  // Use the same ID for database name
+        // Generate a unique database name using lowercase domain and random string
+        $databaseName = 'tenant_' . strtolower(Str::slug($request->domain)) . '_' . strtolower(Str::random(8));
 
         // Create tenant application
         $application = TenantApplication::create([
@@ -230,60 +229,6 @@ class TenantApplicationController extends Controller
         } catch (\Exception $e) {
             Log::error('Failed to send rejection email: ' . $e->getMessage());
             return back()->with('warning', 'Application rejected but failed to send notification email.');
-        }
-    }
-
-    public function adminDashboard()
-    {
-        try {
-            // Get the current tenant
-            $tenant = tenant();
-            
-            if (!$tenant) {
-                \Log::error('No tenant found for request');
-                return redirect()->route('login')->with('error', 'Tenant not found');
-            }
-
-            // Configure tenant connection
-            config(['database.connections.tenant.database' => $tenant->database]);
-            DB::purge('tenant');
-            DB::reconnect('tenant');
-            
-            // Create products table if it doesn't exist
-            if (!Schema::connection('tenant')->hasTable('products')) {
-                Schema::connection('tenant')->create('products', function ($table) {
-                    $table->id();
-                    $table->string('name');
-                    $table->decimal('price', 10, 2);
-                    $table->text('description')->nullable();
-                    $table->string('image')->nullable();
-                    $table->timestamps();
-                });
-            } else {
-                // Check if image column exists, if not add it
-                if (!Schema::connection('tenant')->hasColumn('products', 'image')) {
-                    Schema::connection('tenant')->table('products', function ($table) {
-                        $table->string('image')->nullable();
-                    });
-                }
-            }
-            
-            // Get products from tenant database
-            $products = DB::connection('tenant')->table('products')->get();
-            
-            \Log::info('Loading admin dashboard', [
-                'tenant_id' => $tenant->id,
-                'database' => $tenant->database,
-                'products_count' => $products->count()
-            ]);
-
-            return view('tenant.dashboard', compact('products'));
-        } catch (\Exception $e) {
-            \Log::error('Error in admin dashboard', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-            return redirect()->route('login')->with('error', 'Error loading dashboard: ' . $e->getMessage());
         }
     }
 

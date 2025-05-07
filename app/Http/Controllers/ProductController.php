@@ -5,123 +5,139 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Validator;
 
 class ProductController extends Controller
 {
-    protected $tenantDatabase;
-
     public function __construct()
     {
-        $this->middleware(function ($request, $next) {
-            // Get the current host and extract domain
-            $host = $request->getHost();
-            $domain = str_replace('.localhost:8000', '', $host);
-            $domain = str_replace('.localhost', '', $domain);
-
-            // Find tenant by domain
-            $tenant = DB::connection('mysql')->table('tenants')->where('domain', $domain)->first();
-            
-            if ($tenant) {
-                $this->tenantDatabase = $tenant->database;
-                // Configure tenant connection
-                config(['database.connections.tenant.database' => $this->tenantDatabase]);
-                DB::purge('tenant');
-                DB::reconnect('tenant');
-            }
-
-            return $next($request);
-        });
+        $this->middleware(['auth']);
     }
 
-    protected function ensureTenantConnection()
-    {
-        if ($this->tenantDatabase) {
-            config(['database.connections.tenant.database' => $this->tenantDatabase]);
-            DB::purge('tenant');
-            DB::reconnect('tenant');
-        }
-    }
-
-    public function index()
-    {
-        $this->ensureTenantConnection();
-        $products = DB::connection('tenant')->table('products')->get();
-        return view('tenant.dashboard', compact('products'));
-    }
-
+    /**
+     * Store a newly created product in storage.
+     */
     public function store(Request $request)
     {
-        $this->ensureTenantConnection();
-        $request->validate([
+        $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
-            'price' => 'required|numeric',
+            'price' => 'required|numeric|min:0',
             'description' => 'nullable|string',
-            'image' => 'nullable|image|max:2048'
+            'image' => 'nullable|image|max:2048',
         ]);
 
-        $data = [
-            'name' => $request->name,
-            'price' => $request->price,
-            'description' => $request->description,
-            'created_at' => now(),
-            'updated_at' => now()
-        ];
-
-        if ($request->hasFile('image')) {
-            $path = $request->file('image')->store('products', 'public');
-            $data['image'] = $path;
+        if ($validator->fails()) {
+            return redirect()->back()->withErrors($validator)->withInput();
         }
 
-        DB::connection('tenant')->table('products')->insert($data);
+        $imagePath = null;
+        if ($request->hasFile('image')) {
+            $imagePath = $request->file('image')->store('products', 'public');
+        }
 
-        return redirect()->back()->with('success', 'Product added successfully');
+        try {
+            DB::connection('tenant')->table('products')->insert([
+                'name' => $request->name,
+                'price' => $request->price,
+                'description' => $request->description,
+                'image' => $imagePath,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            return redirect()->back()->with('status', 'Product created successfully!');
+        } catch (\Exception $e) {
+            return redirect()->back()->with('error', 'Failed to create product: ' . $e->getMessage());
+        }
     }
 
+    /**
+     * Show the form for editing the specified product.
+     */
+    public function edit($id)
+    {
+        try {
+            $product = DB::connection('tenant')->table('products')->where('id', $id)->first();
+            
+            if (!$product) {
+                return response()->json(['error' => 'Product not found'], 404);
+            }
+
+            return response()->json($product);
+        } catch (\Exception $e) {
+            return response()->json(['error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Update the specified product in storage.
+     */
     public function update(Request $request, $id)
     {
-        $this->ensureTenantConnection();
-        $request->validate([
+        $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
-            'price' => 'required|numeric',
+            'price' => 'required|numeric|min:0',
             'description' => 'nullable|string',
-            'image' => 'nullable|image|max:2048'
+            'image' => 'nullable|image|max:2048',
         ]);
 
-        $data = [
-            'name' => $request->name,
-            'price' => $request->price,
-            'description' => $request->description,
-            'updated_at' => now()
-        ];
-
-        if ($request->hasFile('image')) {
-            // Delete old image if exists
-            $product = DB::connection('tenant')->table('products')->find($id);
-            if ($product && $product->image) {
-                Storage::disk('public')->delete($product->image);
-            }
-            
-            $path = $request->file('image')->store('products', 'public');
-            $data['image'] = $path;
+        if ($validator->fails()) {
+            return redirect()->back()->withErrors($validator)->withInput();
         }
 
-        DB::connection('tenant')->table('products')->where('id', $id)->update($data);
+        try {
+            $product = DB::connection('tenant')->table('products')->where('id', $id)->first();
+            
+            if (!$product) {
+                return redirect()->back()->with('error', 'Product not found');
+            }
 
-        return redirect()->back()->with('success', 'Product updated successfully');
+            $data = [
+                'name' => $request->name,
+                'price' => $request->price,
+                'description' => $request->description,
+                'updated_at' => now(),
+            ];
+
+            if ($request->hasFile('image')) {
+                // Delete old image if exists
+                if ($product->image && Storage::disk('public')->exists($product->image)) {
+                    Storage::disk('public')->delete($product->image);
+                }
+                
+                $data['image'] = $request->file('image')->store('products', 'public');
+            }
+
+            DB::connection('tenant')->table('products')->where('id', $id)->update($data);
+
+            return redirect()->back()->with('status', 'Product updated successfully!');
+        } catch (\Exception $e) {
+            return redirect()->back()->with('error', 'Failed to update product: ' . $e->getMessage());
+        }
     }
 
+    /**
+     * Remove the specified product from storage.
+     */
     public function destroy($id)
     {
-        $this->ensureTenantConnection();
-        // Get product to delete image
-        $product = DB::connection('tenant')->table('products')->find($id);
-        
-        if ($product && $product->image) {
-            Storage::disk('public')->delete($product->image);
+        try {
+            $product = DB::connection('tenant')->table('products')->where('id', $id)->first();
+            
+            if (!$product) {
+                return response()->json(['error' => 'Product not found'], 404);
+            }
+
+            // Delete the image if exists
+            if ($product->image && Storage::disk('public')->exists($product->image)) {
+                Storage::disk('public')->delete($product->image);
+            }
+
+            DB::connection('tenant')->table('products')->where('id', $id)->delete();
+
+            return response()->json(['message' => 'Product deleted successfully']);
+        } catch (\Exception $e) {
+            return response()->json(['error' => $e->getMessage()], 500);
         }
-
-        DB::connection('tenant')->table('products')->where('id', $id)->delete();
-
-        return redirect()->back()->with('success', 'Product deleted successfully');
     }
 } 

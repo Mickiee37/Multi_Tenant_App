@@ -17,7 +17,7 @@ class RouteServiceProvider extends ServiceProvider
      *
      * @var string
      */
-    public const HOME = '/admin/tenant-dashboard';
+    public const HOME = '/dashboard';
 
     /**
      * Define your route model bindings, pattern filters, and other route configuration.
@@ -29,43 +29,35 @@ class RouteServiceProvider extends ServiceProvider
         });
 
         $this->mapWebRoutes();
-        $this->mapApiRoutes();
+        $this->mapTenantRoutes();
     }
 
     protected function mapWebRoutes()
     {
-        // Central domain routes
         foreach ($this->centralDomains() as $domain) {
-            Route::middleware(['web', 'central.domain'])
+            Route::middleware('web')
                 ->domain($domain)
+                ->namespace($this->namespace)
                 ->group(base_path('routes/web.php'));
         }
+    }
 
-        // Tenant routes with proper middleware
+    protected function mapTenantRoutes()
+    {
         Route::middleware([
             'web',
             \Stancl\Tenancy\Middleware\InitializeTenancyByDomain::class,
             \Stancl\Tenancy\Middleware\PreventAccessFromCentralDomains::class,
         ])->group(base_path('routes/tenant.php'));
-    }
 
-    protected function mapApiRoutes()
-    {
-        foreach ($this->centralDomains() as $domain) {
-            Route::prefix('api')
-                ->domain($domain)
-                ->middleware('api')
-                ->group(base_path('routes/api.php'));
+        // Set HOME for tenant to admin dashboard
+        if (tenancy()->initialized) {
+            $this->HOME = '/admin/tenant-dashboard';
         }
     }
 
     protected function centralDomains(): array
     {
-        return config('tenancy.central_domains', [
-            'localhost',
-            'localhost:8000',
-            '127.0.0.1',
-            '127.0.0.1:8000'
-        ]);
+        return config('tenancy.central_domains', []);
     }
 } 

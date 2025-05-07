@@ -16,11 +16,8 @@ class Tenant extends BaseTenant implements TenantWithDatabase
         'name',
         'domain',
         'database',
-        'data',
-    ];
-
-    protected $casts = [
-        'data' => 'array',
+        'database_name',
+        'data'
     ];
 
     public static function getCustomColumns(): array
@@ -30,9 +27,14 @@ class Tenant extends BaseTenant implements TenantWithDatabase
             'name',
             'domain',
             'database',
-            'data',
+            'database_name',
+            'data'
         ];
     }
+
+    protected $casts = [
+        'data' => 'array'
+    ];
 
     public function domains()
     {

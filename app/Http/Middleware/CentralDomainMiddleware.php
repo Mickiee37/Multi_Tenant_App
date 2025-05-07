@@ -10,16 +10,28 @@ class CentralDomainMiddleware
 {
     public function handle(Request $request, Closure $next)
     {
-        // If tenant() helper returns true, we're on a tenant domain
-        if (tenant()) {
-            Log::warning('Tenant attempting to access central domain route', [
+        $host = $request->getHost();
+        $centralDomains = config('tenancy.central_domains', [
+            'localhost',
+            'localhost:8000',
+            '127.0.0.1',
+            '127.0.0.1:8000'
+        ]);
+
+        // If this is not a central domain, block access
+        if (!in_array($host, $centralDomains)) {
+            Log::warning('Non-central domain attempted to access central route', [
                 'path' => $request->path(),
-                'host' => $request->getHost(),
-                'tenant_id' => tenant()->id
+                'host' => $host
             ]);
             
-            // Redirect tenant users to their dashboard
-            return redirect('/admin/tenant-dashboard');
+            // Redirect to tenant dashboard if it's a tenant
+            if (tenant()) {
+                return redirect('/admin/tenant-dashboard')
+                    ->with('error', 'Access denied. This section is only accessible from the central domain.');
+            }
+            
+            abort(404, 'Not Found');
         }
 
         return $next($request);

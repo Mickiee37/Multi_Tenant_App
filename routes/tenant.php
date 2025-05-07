@@ -3,63 +3,59 @@
 declare(strict_types=1);
 
 use Illuminate\Support\Facades\Route;
-use Stancl\Tenancy\Middleware\InitializeTenancyByDomain;
-use Stancl\Tenancy\Middleware\PreventAccessFromCentralDomains;
-use App\Http\Controllers\TenantApplicationController;
 use App\Http\Controllers\Auth\LoginController;
+use App\Http\Controllers\TenantController;
+use App\Http\Controllers\ProductController;
+use App\Http\Controllers\DiagnosticController;
 
 /*
 |--------------------------------------------------------------------------
 | Tenant Routes
 |--------------------------------------------------------------------------
 |
-| Here you can register the tenant routes for your application.
-| These routes are loaded by the TenantRouteServiceProvider.
-|
-| Feel free to customize them however you want. Good luck!
+| Here is where you can register tenant-specific routes for your application.
+| These routes are loaded by the RouteServiceProvider within a group which
+| contains the "web" middleware group and the tenant middleware.
 |
 */
 
-Route::middleware([
-    'web',
-    InitializeTenancyByDomain::class,
-    PreventAccessFromCentralDomains::class,
-])->group(function () {
-    // Authentication Routes
+// Diagnostic route that works without auth
+Route::get('/diagnostic/tenant-check', [DiagnosticController::class, 'tenantCheck']);
+
+// Root route - always redirect to login
+Route::get('/', function() {
+    return redirect('/login');
+});
+
+// Guest routes - available without authentication
+Route::middleware(['guest'])->group(function() {
+    // Auth routes
     Route::get('/login', [LoginController::class, 'showLoginForm'])->name('login');
-    Route::post('/login', [LoginController::class, 'login']);
+    Route::post('/login', [LoginController::class, 'login'])->name('login.post');
+});
+
+// Protected routes - require authentication
+Route::middleware(['auth'])->group(function () {
+    // Logout route
     Route::post('/logout', [LoginController::class, 'logout'])->name('logout');
 
-    // Root route - redirect based on auth status
-    Route::get('/', function () {
-        return auth()->check() 
-            ? redirect('/admin/tenant-dashboard')
-            : redirect()->route('login');
-    });
+    // Redirect old dashboard to tenant dashboard
+    Route::get('/dashboard', function() {
+        return redirect('/admin/tenant-dashboard');
+    })->name('dashboard');
 
-    // Protected Routes
-    Route::middleware(['auth'])->group(function () {
-        // Catch any attempts to access central dashboard
-        Route::get('/admin/dashboard', function() {
-            return redirect('/admin/tenant-dashboard');
-        });
-
-        // Dashboard routes
-        Route::get('/admin/tenant-dashboard', [TenantApplicationController::class, 'adminDashboard'])
-            ->name('tenant.admin.dashboard');
-
+    // Admin routes
+    Route::prefix('admin')->group(function () {
+        // Tenant Dashboard
+        Route::get('/tenant-dashboard', [TenantController::class, 'dashboard'])
+            ->name('tenant.dashboard');
+        
         // Product Management Routes
-        Route::prefix('admin')->group(function () {
-            Route::get('/products', [TenantApplicationController::class, 'products'])
-                ->name('tenant.products.index');
-            Route::post('/products', [TenantApplicationController::class, 'storeProduct'])
-                ->name('tenant.products.store');
-            Route::get('/products/{id}/edit', [TenantApplicationController::class, 'editProduct'])
-                ->name('tenant.products.edit');
-            Route::put('/products/{id}', [TenantApplicationController::class, 'updateProduct'])
-                ->name('tenant.products.update');
-            Route::delete('/products/{id}', [TenantApplicationController::class, 'deleteProduct'])
-                ->name('tenant.products.delete');
+        Route::prefix('products')->name('tenant.products.')->group(function () {
+            Route::post('/', [ProductController::class, 'store'])->name('store');
+            Route::put('/{product}', [ProductController::class, 'update'])->name('update');
+            Route::delete('/{product}', [ProductController::class, 'destroy'])->name('delete');
+            Route::get('/{product}/edit', [ProductController::class, 'edit'])->name('edit');
         });
     });
 });

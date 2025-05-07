@@ -8,6 +8,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\View\View;
+use Illuminate\Support\Facades\Log;
 
 class AuthenticatedSessionController extends Controller
 {
@@ -27,6 +28,15 @@ class AuthenticatedSessionController extends Controller
         $request->authenticate();
 
         $request->session()->regenerate();
+
+        Log::info('AuthenticatedSessionController store', [
+            'is_tenant' => tenant() ? 'yes' : 'no',
+            'user_id' => Auth::id()
+        ]);
+
+        if (tenant()) {
+            return redirect('/admin/tenant-dashboard');
+        }
 
         return redirect()->intended(route('dashboard', absolute: false));
     }

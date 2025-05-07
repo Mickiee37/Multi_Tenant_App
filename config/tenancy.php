@@ -6,10 +6,56 @@ use Stancl\Tenancy\Database\Models\Domain;
 use Stancl\Tenancy\Database\Models\Tenant;
 
 return [
+    'tenant_model' => \App\Models\Tenant::class,
+    'domain_model' => \App\Models\Domain::class,
+
+    'central_domains' => [
+        'localhost',
+        'localhost:8000',
+        '127.0.0.1',
+        '127.0.0.1:8000'
+    ],
+
+    'id_generator' => Stancl\Tenancy\UUIDGenerator::class,
+
+    'database' => [
+        'central_connection' => env('DB_CONNECTION', 'mysql'),
+        'template_tenant_connection' => null,
+        'prefix' => 'tenant',
+        'suffix' => '',
+        'middleware' => ['web', 'universal'],
+    ],
+
+    'bootstrappers' => [
+        Stancl\Tenancy\Bootstrappers\DatabaseTenancyBootstrapper::class,
+        Stancl\Tenancy\Bootstrappers\CacheTenancyBootstrapper::class,
+        Stancl\Tenancy\Bootstrappers\FilesystemTenancyBootstrapper::class,
+        Stancl\Tenancy\Bootstrappers\QueueTenancyBootstrapper::class,
+        // Stancl\Tenancy\Bootstrappers\RedisTenancyBootstrapper::class, // Note: phpredis is required
+    ],
+
+    'features' => [
+        // Stancl\Tenancy\Features\UserImpersonation::class,
+        // Stancl\Tenancy\Features\TelescopeTags::class,
+        // Stancl\Tenancy\Features\UniversalRoutes::class,
+        // Stancl\Tenancy\Features\TenantConfig::class, // https://tenancyforlaravel.com/docs/v3/features/tenant-config
+        // Stancl\Tenancy\Features\CrossDomainRedirect::class, // https://tenancyforlaravel.com/docs/v3/features/cross-domain-redirect
+    ],
+
+    'middleware_priority' => [
+        'first' => [
+            \Stancl\Tenancy\Middleware\InitializeTenancyByDomain::class,
+            \Stancl\Tenancy\Middleware\PreventAccessFromCentralDomains::class,
+        ],
+        'last' => [
+            \Stancl\Tenancy\Middleware\InitializeTenancyByRequestData::class,
+        ],
+    ],
+
     'storage_driver' => 'db',
+
     'storage' => [
         'db' => [
-            'connection' => null,
             'table_names' => [
                 'tenants' => 'tenants',
                 'domains' => 'domains',
@@ -17,66 +63,5 @@ return [
         ],
     ],
 
-    'tenant_model' => \App\Models\Tenant::class,
-    'domain_model' => Domain::class,
-
-    'database' => [
-        'central_connection' => env('DB_CONNECTION', 'mysql'),
-        'template_tenant_connection' => null,
-        'prefix' => 'tenant',
-        'suffix' => '',
-        'middleware' => [
-            // See https://tenancyforlaravel.com/docs/v3/configuration/#middleware
-        ],
-    ],
-
-    'redis' => [
-        'prefix_base' => 'tenant',
-        'prefixed_connections' => [
-            // 'default',
-        ],
-    ],
-
-    'cache' => [
-        'tag_base' => 'tenant',
-    ],
-
-    'filesystem' => [
-        'suffix_base' => 'tenant',
-        'disks' => [
-            'local',
-            'public',
-            // 's3',
-        ],
-        'root_override' => [
-            'local' => '%storage_path%/app/',
-            'public' => '%storage_path%/app/public/',
-        ],
-
-        'url_override' => [
-            'public' => '%storage_url%/app/public/',
-        ],
-    ],
-
-    'central_domains' => [
-        'localhost',
-        'localhost:8000',
-        '127.0.0.1',
-        '127.0.0.1:8000',
-        'www.localhost',
-        'www.localhost:8000'
-    ],
-
-    'identification' => [
-        'domain' => [
-            'central_domains' => [
-                'localhost',
-                'localhost:8000',
-                '127.0.0.1',
-                '127.0.0.1:8000',
-                'www.localhost',
-                'www.localhost:8000'
-            ],
-        ],
-    ],
+    'tenant_route_namespace' => 'App\Http\Controllers',
 ];

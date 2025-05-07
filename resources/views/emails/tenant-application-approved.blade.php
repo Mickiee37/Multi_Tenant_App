@@ -60,7 +60,7 @@
 
         <p style='color: red; font-weight: bold;'>Please save these credentials and change your password after your first login.</p>
 
-        <p><a href='{{ $domain }}' style='display: inline-block; background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;'>Click here to access your domain</a></p>
+        <p><a href='{{ $domain }}/login' style='display: inline-block; background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;'>Click here to access your domain</a></p>
 
         <p>Best regards,<br>
         Your Multi-Tenant Team</p>

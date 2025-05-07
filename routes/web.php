@@ -6,6 +6,8 @@ use App\Http\Controllers\TenantApplicationController;
 use App\Http\Controllers\GoogleAuthController;
 use App\Http\Controllers\AdminController;
 use App\Http\Controllers\Auth\LoginController;
+use App\Http\Middleware\CentralDomainMiddleware;
+use App\Http\Controllers\DiagnosticController;
 
 /*
 |--------------------------------------------------------------------------
@@ -18,30 +20,28 @@ use App\Http\Controllers\Auth\LoginController;
 |
 */
 
-Route::middleware(['web'])->group(function () {
-    // Redirect to tenant domain if accessed through tenant domain
-    if (tenant()) {
-        return redirect()->route('tenant.admin.dashboard');
-    }
+// Central domain routes - protected by CentralDomainMiddleware
+Route::middleware(['web', CentralDomainMiddleware::class])->group(function () {
+    Route::get('/', function () {
+        return view('welcome');
+    });
 
-    // Central domain routes
-Route::get('/', function () {
-    return view('welcome');
-});
-
-Route::get('/dashboard', function () {
+    Route::get('/dashboard', function () {
+        if (tenant()) {
+            return redirect('/admin/tenant-dashboard');
+        }
         if (auth()->check() && auth()->user()->is_admin) {
-        return redirect()->route('admin.dashboard');
-    }
-    return view('dashboard');
-})->middleware(['auth', 'verified'])->name('dashboard');
+            return redirect()->route('admin.dashboard');
+        }
+        return view('dashboard');
+    })->middleware(['auth', 'verified'])->name('dashboard');
 
     // Profile routes
-Route::middleware('auth')->group(function () {
-    Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
-    Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
-    Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
-});
+    Route::middleware('auth')->group(function () {
+        Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
+        Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
+        Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
+    });
 
     // Admin Routes (only accessible from central domain)
     Route::middleware(['auth', \App\Http\Middleware\AdminMiddleware::class])
@@ -55,35 +55,93 @@ Route::middleware('auth')->group(function () {
         });
 
     // Tenant registration routes
-Route::middleware('auth')->group(function () {
-    Route::get('/tenant/register', [TenantApplicationController::class, 'showRegistrationForm'])->name('tenant.register');
-    Route::post('/tenant/register', [TenantApplicationController::class, 'register'])->name('tenant.register.submit');
+    Route::middleware('auth')->group(function () {
+        Route::get('/tenant/register', [TenantApplicationController::class, 'showRegistrationForm'])->name('tenant.register');
+        Route::post('/tenant/register', [TenantApplicationController::class, 'register'])->name('tenant.register.submit');
+    });
+
+    Route::get('/sign-up', [TenantApplicationController::class, 'showRegistrationForm'])
+        ->name('tenant.signup')
+        ->middleware('guest');
+
+    Route::post('/sign-up', [TenantApplicationController::class, 'register'])
+        ->name('tenant.register');
+
+    Route::get('/sign-up/success', function () {
+        return view('tenant.register-success');
+    })->name('tenant.register.success');
+
+    // Google OAuth Routes
+    Route::get('/oauth/redirect', [GoogleAuthController::class, 'redirect'])->name('google.redirect');
+    Route::get('/oauth/callback', [GoogleAuthController::class, 'callback'])->name('google.callback');
 });
 
-Route::get('/sign-up', [TenantApplicationController::class, 'showRegistrationForm'])
-    ->name('tenant.signup')
-    ->middleware('guest');
+// Authentication Routes - these should be accessible from both central and tenant domains
+Route::middleware('web')->group(function () {
+    Route::get('/login', [LoginController::class, 'showLoginForm'])->name('login');
+    Route::post('/login', [LoginController::class, 'login']);
+    Route::post('/logout', [LoginController::class, 'logout'])->name('logout');
+});
 
-Route::post('/sign-up', [TenantApplicationController::class, 'register'])
-    ->name('tenant.register');
+// Add universal diagnostic route that works on all domains
+Route::get('/diagnostic/tenant-check', [DiagnosticController::class, 'tenantCheck']);
 
-Route::get('/sign-up/success', function () {
-    return view('tenant.register-success');
-})->name('tenant.register.success');
-
-// Google OAuth Routes
-Route::get('/oauth/redirect', [GoogleAuthController::class, 'redirect'])->name('google.redirect');
-Route::get('/oauth/callback', [GoogleAuthController::class, 'callback'])->name('google.callback');
-
-// Authentication Routes
-    Route::middleware('guest')->group(function () {
-Route::get('/login', [LoginController::class, 'showLoginForm'])->name('login');
-Route::post('/login', [LoginController::class, 'login']);
+// Manual host-based tenant routes for tway tenant
+Route::domain('tway.localhost')->group(function () {
+    // Direct routes for specific tenant without requiring tenant resolution
+    Route::get('/', function() {
+        return redirect('/login');
     });
     
-    Route::post('/logout', [LoginController::class, 'logout'])
-        ->name('logout')
-        ->middleware('auth');
+    Route::get('/login', function() {
+        return app()->call([new App\Http\Controllers\Auth\LoginController(), 'showLoginForm']);
+    })->name('tway.login');
+    
+    Route::post('/login', function(\Illuminate\Http\Request $request) {
+        return app()->call([new App\Http\Controllers\Auth\LoginController(), 'login'], ['request' => $request]);
+    });
+    
+    Route::middleware(['auth'])->group(function() {
+        Route::get('/dashboard', function() {
+            return redirect('/admin/tenant-dashboard');
+        });
+        
+        Route::get('/admin/tenant-dashboard', function() {
+            return view('tenant.dashboard', [
+                'tenant' => \App\Models\Tenant::where('domain', 'tway.localhost')->first(),
+                'products' => []
+            ]);
+        })->name('tway.dashboard');
+    });
+});
+
+// Manual host-based tenant routes for hggh tenant
+Route::domain('hggh.localhost')->group(function () {
+    // Direct routes for specific tenant without requiring tenant resolution
+    Route::get('/', function() {
+        return redirect('/login');
+    });
+    
+    Route::get('/login', function() {
+        return app()->call([new App\Http\Controllers\Auth\LoginController(), 'showLoginForm']);
+    })->name('hggh.login');
+    
+    Route::post('/login', function(\Illuminate\Http\Request $request) {
+        return app()->call([new App\Http\Controllers\Auth\LoginController(), 'login'], ['request' => $request]);
+    });
+    
+    Route::middleware(['auth'])->group(function() {
+        Route::get('/dashboard', function() {
+            return redirect('/admin/tenant-dashboard');
+        });
+        
+        Route::get('/admin/tenant-dashboard', function() {
+            return view('tenant.dashboard', [
+                'tenant' => \App\Models\Tenant::where('domain', 'hggh.localhost')->first(),
+                'products' => []
+            ]);
+        })->name('hggh.dashboard');
+    });
 });
 
 require __DIR__.'/auth.php';

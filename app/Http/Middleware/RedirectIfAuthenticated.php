@@ -6,11 +6,19 @@ use App\Providers\RouteServiceProvider;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use Symfony\Component\HttpFoundation\Response;
+use Illuminate\Support\Facades\Log;
 
 class RedirectIfAuthenticated
 {
-    public function handle(Request $request, Closure $next, string ...$guards): Response
+    /**
+     * Handle an incoming request.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @param  \Closure  $next
+     * @param  string|null  ...$guards
+     * @return mixed
+     */
+    public function handle(Request $request, Closure $next, ...$guards)
     {
         $guards = empty($guards) ? [null] : $guards;
 
@@ -19,11 +27,6 @@ class RedirectIfAuthenticated
                 if (tenant()) {
                     return redirect('/admin/tenant-dashboard');
                 }
-                
-                if (Auth::user()->is_admin) {
-                    return redirect('/admin/dashboard');
-                }
-                
                 return redirect(RouteServiceProvider::HOME);
             }
         }

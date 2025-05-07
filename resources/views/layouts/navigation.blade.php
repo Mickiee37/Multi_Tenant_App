@@ -5,20 +5,32 @@
             <div class="flex">
                 <!-- Logo -->
                 <div class="shrink-0 flex items-center">
-                    <a href="{{ route('dashboard') }}">
-                        <x-application-logo class="block h-9 w-auto fill-current text-gray-800" />
-                    </a>
+                    @if(tenant())
+                        <a href="{{ route('tenant.dashboard') }}">
+                            <x-application-logo class="block h-9 w-auto fill-current text-gray-800" />
+                        </a>
+                    @else
+                        <a href="{{ route('dashboard') }}">
+                            <x-application-logo class="block h-9 w-auto fill-current text-gray-800" />
+                        </a>
+                    @endif
                 </div>
 
                 <!-- Navigation Links -->
                 <div class="hidden space-x-8 sm:-my-px sm:ml-10 sm:flex">
-                    <x-nav-link :href="route('dashboard')" :active="request()->routeIs('dashboard')">
-                        {{ __('Dashboard') }}
-                    </x-nav-link>
-                    @if(Auth::user()->is_admin && !str_contains(request()->getHost(), '.localhost'))
-                        <x-nav-link :href="route('admin.tenant-applications')" :active="request()->routeIs('admin.tenant-applications')">
-                            {{ __('Tenant Applications') }}
+                    @if(tenant())
+                        <x-nav-link :href="route('tenant.dashboard')" :active="request()->routeIs('tenant.dashboard')">
+                            {{ __('Dashboard') }}
                         </x-nav-link>
+                    @else
+                        <x-nav-link :href="route('dashboard')" :active="request()->routeIs('dashboard')">
+                            {{ __('Dashboard') }}
+                        </x-nav-link>
+                        @if(Auth::user()->is_admin && !str_contains(request()->getHost(), '.localhost'))
+                            <x-nav-link :href="route('admin.tenant-applications')" :active="request()->routeIs('admin.tenant-applications')">
+                                {{ __('Tenant Applications') }}
+                            </x-nav-link>
+                        @endif
                     @endif
                 </div>
             </div>
@@ -72,13 +84,19 @@
     <!-- Responsive Navigation Menu -->
     <div :class="{'block': open, 'hidden': ! open}" class="hidden sm:hidden">
         <div class="pt-2 pb-3 space-y-1">
-            <x-responsive-nav-link :href="route('dashboard')" :active="request()->routeIs('dashboard')">
-                {{ __('Dashboard') }}
-            </x-responsive-nav-link>
-            @if(Auth::user()->is_admin && !str_contains(request()->getHost(), '.localhost'))
-                <x-responsive-nav-link :href="route('admin.tenant-applications')" :active="request()->routeIs('admin.tenant-applications')">
-                    {{ __('Tenant Applications') }}
+            @if(tenant())
+                <x-responsive-nav-link :href="route('tenant.dashboard')" :active="request()->routeIs('tenant.dashboard')">
+                    {{ __('Dashboard') }}
                 </x-responsive-nav-link>
+            @else
+                <x-responsive-nav-link :href="route('dashboard')" :active="request()->routeIs('dashboard')">
+                    {{ __('Dashboard') }}
+                </x-responsive-nav-link>
+                @if(Auth::user()->is_admin && !str_contains(request()->getHost(), '.localhost'))
+                    <x-responsive-nav-link :href="route('admin.tenant-applications')" :active="request()->routeIs('admin.tenant-applications')">
+                        {{ __('Tenant Applications') }}
+                    </x-responsive-nav-link>
+                @endif
             @endif
         </div>
 
