@@ -20,11 +20,11 @@
                         <div class="col-md-6 text-md-end">
                             @if(count($products) >= $tenant->getProductLimit())
                                 <p class="text-danger mb-2">You've reached your product limit!</p>
-                                <a href="#" class="btn btn-warning">Upgrade Now</a>
+                                <a href="{{ route(request()->getHost() . '.subscription.upgrade-page') }}" class="btn btn-warning">Upgrade Now</a>
                             @else
                                 <p class="text-success mb-2">You can add {{ $tenant->getProductLimit() - count($products) }} more product(s)</p>
                                 @if($tenant->subscription_plan != 'enterprise')
-                                    <a href="#" class="btn btn-outline-primary">Upgrade for More</a>
+                                    <a href="{{ route(request()->getHost() . '.subscription.upgrade-page') }}" class="btn btn-outline-primary">Upgrade for More</a>
                                 @endif
                             @endif
                         </div>

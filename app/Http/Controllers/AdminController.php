@@ -285,4 +285,103 @@ class AdminController extends Controller
             return back()->with('error', 'Failed to deactivate tenant. Please try again.');
         }
     }
+
+    /**
+     * Show the manage plan page for a tenant.
+     *
+     * @param string $id The tenant ID
+     * @return \Illuminate\View\View
+     */
+    public function showManagePlan($id)
+    {
+        try {
+            $tenant = Tenant::findOrFail($id);
+            
+            $plans = [
+                'basic' => [
+                    'name' => 'Basic',
+                    'productLimit' => 2,
+                    'monthlyPrice' => 9.99,
+                ],
+                'pro' => [
+                    'name' => 'Pro',
+                    'productLimit' => 5,
+                    'monthlyPrice' => 19.99,
+                ],
+                'premium' => [
+                    'name' => 'Premium',
+                    'productLimit' => 10,
+                    'monthlyPrice' => 39.99,
+                ],
+                'enterprise' => [
+                    'name' => 'Enterprise',
+                    'productLimit' => 20,
+                    'monthlyPrice' => 79.99,
+                ]
+            ];
+            
+            return view('admin.manage-plan', compact('tenant', 'plans'));
+        } catch (\Exception $e) {
+            Log::error('Error showing manage plan page: ' . $e->getMessage(), [
+                'tenant_id' => $id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return back()->with('error', 'Error retrieving tenant information: ' . $e->getMessage());
+        }
+    }
+    
+    /**
+     * Update a tenant's subscription plan.
+     *
+     * @param \Illuminate\Http\Request $request
+     * @param string $id The tenant ID
+     * @return \Illuminate\Http\RedirectResponse
+     */
+    public function updatePlan(Request $request, $id)
+    {
+        try {
+            $request->validate([
+                'plan' => 'required|in:basic,pro,premium,enterprise',
+                'expires_at' => 'nullable|date',
+            ]);
+            
+            $tenant = Tenant::findOrFail($id);
+            
+            // Update the tenant's subscription plan
+            $oldPlan = $tenant->subscription_plan ?? 'basic';
+            $newPlan = $request->input('plan');
+            
+            $tenant->subscription_plan = $newPlan;
+            
+            // Update expiration date if provided
+            if ($request->filled('expires_at')) {
+                $tenant->subscription_expires_at = $request->input('expires_at');
+            } else {
+                // Default to 1 year from now
+                $tenant->subscription_expires_at = now()->addYear();
+            }
+            
+            $tenant->save();
+            
+            Log::info('Tenant plan updated by admin', [
+                'tenant_id' => $id,
+                'old_plan' => $oldPlan,
+                'new_plan' => $newPlan,
+                'expires_at' => $tenant->subscription_expires_at
+            ]);
+            
+            return redirect()->route('admin.tenant-applications')
+                ->with('success', "Tenant plan updated to {$newPlan} successfully.");
+        } catch (\Exception $e) {
+            Log::error('Error updating tenant plan: ' . $e->getMessage(), [
+                'tenant_id' => $id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return back()->with('error', 'Error updating tenant plan: ' . $e->getMessage());
+        }
+    }
 } 

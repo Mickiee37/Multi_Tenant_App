@@ -31,6 +31,7 @@
                                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
                                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Domain</th>
                                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Plan</th>
                                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                                 </tr>
                             </thead>
@@ -54,6 +55,19 @@
                                                 {{ $application->status === 'deactivated' ? 'bg-gray-100 text-gray-800' : '' }}">
                                                 {{ ucfirst($application->status) }}
                                             </span>
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap">
+                                            @if($application->status === 'approved' && isset($application->tenant))
+                                                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
+                                                    {{ ($application->tenant->subscription_plan ?? 'basic') === 'basic' ? 'bg-blue-100 text-blue-800' : '' }}
+                                                    {{ ($application->tenant->subscription_plan ?? '') === 'pro' ? 'bg-indigo-100 text-indigo-800' : '' }}
+                                                    {{ ($application->tenant->subscription_plan ?? '') === 'premium' ? 'bg-purple-100 text-purple-800' : '' }}
+                                                    {{ ($application->tenant->subscription_plan ?? '') === 'enterprise' ? 'bg-pink-100 text-pink-800' : '' }}">
+                                                    {{ ucfirst($application->tenant->subscription_plan ?? 'basic') }}
+                                                </span>
+                                            @else
+                                                <span class="text-gray-500">-</span>
+                                            @endif
                                         </td>
                                         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
                                             @if($application->status === 'pending')
@@ -79,12 +93,15 @@
                                                     ]);
                                                 @endphp
                                                 @if($tenantId)
+                                                    <a href="{{ route('admin.tenant.manage-plan', $tenantId) }}" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-1 px-3 rounded mr-2">
+                                                        Manage Plan
+                                                    </a>
                                                     <form action="{{ route('admin.tenant.deactivate', ['id' => $tenantId]) }}" method="POST" class="inline" onsubmit="return confirm('Are you sure you want to deactivate this tenant? This will prevent them from accessing their account.');">
                                                         @csrf
                                                         <button type="submit" class="text-red-600 hover:text-red-900">Deactivate</button>
                                                     </form>
                                                 @else
-                                                    <span class="text-red-600">Unable to deactivate - No tenant ID found</span>
+                                                    <span class="text-red-600">Unable to manage - No tenant ID found</span>
                                                 @endif
                                                 <a href="http://{{ $application->domain }}.localhost:8000" target="_blank" class="text-blue-600 hover:text-blue-900 ml-3">Visit Site</a>
                                             @endif
@@ -92,7 +109,7 @@
                                     </tr>
                                 @empty
                                     <tr>
-                                        <td colspan="5" class="px-6 py-4 text-center text-gray-500">
+                                        <td colspan="6" class="px-6 py-4 text-center text-gray-500">
                                             No tenant applications found
                                         </td>
                                     </tr>
