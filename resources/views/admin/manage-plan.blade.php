@@ -105,6 +105,18 @@
                                         </td>
                                     @endforeach
                                 </tr>
+                                <tr>
+                                    <td>Features</td>
+                                    @foreach($plans as $planKey => $plan)
+                                        <td class="{{ ($tenant->subscription_plan ?? 'basic') == $planKey ? 'table-primary' : '' }}">
+                                            <ul class="list-unstyled">
+                                                @foreach($plan['features'] as $feature)
+                                                    <li class="mb-1"><i class="bi bi-check-circle-fill text-success mr-1"></i> {{ $feature }}</li>
+                                                @endforeach
+                                            </ul>
+                                        </td>
+                                    @endforeach
+                                </tr>
                             </tbody>
                         </table>
                     </div>

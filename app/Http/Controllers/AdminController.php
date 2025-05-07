@@ -302,21 +302,45 @@ class AdminController extends Controller
                     'name' => 'Basic',
                     'productLimit' => 2,
                     'monthlyPrice' => 9.99,
+                    'features' => [
+                        'Basic product management',
+                        '2 products',
+                        'Standard support'
+                    ]
                 ],
                 'pro' => [
                     'name' => 'Pro',
                     'productLimit' => 5,
                     'monthlyPrice' => 19.99,
+                    'features' => [
+                        'Advanced product management',
+                        '5 products',
+                        'Theme customization (2 themes)'
+                    ]
                 ],
                 'premium' => [
                     'name' => 'Premium',
                     'productLimit' => 10,
                     'monthlyPrice' => 39.99,
+                    'features' => [
+                        'Full product management suite',
+                        '10 products',
+                        'Theme customization (5 themes)'
+                    ]
                 ],
                 'enterprise' => [
                     'name' => 'Enterprise',
                     'productLimit' => 20,
                     'monthlyPrice' => 79.99,
+                    'features' => [
+                        'Complete product management solution',
+                        '20 products',
+                        'Dedicated support',
+                        'Full analytics suite',
+                        'API access',
+                        'Custom integrations',
+                        'White labeling'
+                    ]
                 ]
             ];
             

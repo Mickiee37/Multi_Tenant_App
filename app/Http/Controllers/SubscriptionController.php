@@ -52,8 +52,7 @@ class SubscriptionController extends Controller
                 'features' => [
                     'Advanced product management',
                     '5 products',
-                    'Priority support',
-                    'Analytics dashboard'
+                    'Theme customization (2 themes)',
                 ]
             ],
             'premium' => [
@@ -63,9 +62,7 @@ class SubscriptionController extends Controller
                 'features' => [
                     'Full product management suite',
                     '10 products',
-                    'Premium support',
-                    'Advanced analytics',
-                    'API access'
+                    'Theme customization (5 themes)',
                 ]
             ],
             'enterprise' => [

@@ -10,6 +10,7 @@ use App\Http\Middleware\CentralDomainMiddleware;
 use App\Http\Controllers\DiagnosticController;
 use App\Http\Controllers\TenantController;
 use App\Http\Controllers\SubscriptionController;
+use App\Http\Controllers\ThemeController;
 
 /*
 |--------------------------------------------------------------------------
@@ -154,6 +155,10 @@ $registerTenantRoutes = function($domain) {
                 ->name($domain . '.subscription.upgrade-page');
             Route::post('/admin/subscription/upgrade', [SubscriptionController::class, 'upgrade'])
                 ->name($domain . '.subscription.upgrade');
+                
+            // Theme routes
+            Route::post('/admin/theme/update', [ThemeController::class, 'update'])
+                ->name($domain . '.theme.update');
         });
     });
 };

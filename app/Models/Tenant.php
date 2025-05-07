@@ -71,4 +71,31 @@ class Tenant extends BaseTenant implements TenantWithDatabase
     {
         return $currentCount >= $this->getProductLimit();
     }
+    
+    /**
+     * Get the tenant's current theme
+     */
+    public function getTheme()
+    {
+        if (is_string($this->data)) {
+            $data = json_decode($this->data, true) ?? [];
+        } else {
+            $data = $this->data ?? [];
+        }
+        
+        return $data['theme'] ?? 'default';
+    }
+    
+    /**
+     * Get the maximum number of themes available based on subscription plan
+     */
+    public function getThemeLimit()
+    {
+        return match($this->subscription_plan) {
+            'pro' => 2,
+            'premium' => 5,
+            'enterprise' => 10,
+            default => 1 // Basic plan
+        };
+    }
 } 
