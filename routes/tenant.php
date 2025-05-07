@@ -56,6 +56,7 @@ Route::middleware(['auth'])->group(function () {
             Route::put('/{product}', [ProductController::class, 'update'])->name('update');
             Route::delete('/{product}', [ProductController::class, 'destroy'])->name('delete');
             Route::get('/{product}/edit', [ProductController::class, 'edit'])->name('edit');
+            Route::post('/fix-schema', [ProductController::class, 'fixSchema'])->name('fix-schema');
         });
     });
 });

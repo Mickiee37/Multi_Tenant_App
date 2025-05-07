@@ -17,7 +17,9 @@ class Tenant extends BaseTenant implements TenantWithDatabase
         'domain',
         'database',
         'database_name',
-        'data'
+        'data',
+        'subscription_plan',
+        'subscription_expires_at'
     ];
 
     public static function getCustomColumns(): array
@@ -28,12 +30,15 @@ class Tenant extends BaseTenant implements TenantWithDatabase
             'domain',
             'database',
             'database_name',
-            'data'
+            'data',
+            'subscription_plan',
+            'subscription_expires_at'
         ];
     }
 
     protected $casts = [
-        'data' => 'array'
+        'data' => 'array',
+        'subscription_expires_at' => 'datetime'
     ];
 
     public function domains()
@@ -44,5 +49,26 @@ class Tenant extends BaseTenant implements TenantWithDatabase
     public function tenantApplication()
     {
         return $this->hasOne(TenantApplication::class, 'database_name', 'database');
+    }
+    
+    /**
+     * Get the maximum number of products allowed based on subscription plan
+     */
+    public function getProductLimit()
+    {
+        return match($this->subscription_plan) {
+            'pro' => 5,
+            'premium' => 10,
+            'enterprise' => 20,
+            default => 2 // Basic plan
+        };
+    }
+    
+    /**
+     * Check if the tenant has reached their product limit
+     */
+    public function hasReachedProductLimit($currentCount)
+    {
+        return $currentCount >= $this->getProductLimit();
     }
 } 

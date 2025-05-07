@@ -8,6 +8,7 @@ use App\Http\Controllers\AdminController;
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Middleware\CentralDomainMiddleware;
 use App\Http\Controllers\DiagnosticController;
+use App\Http\Controllers\TenantController;
 
 /*
 |--------------------------------------------------------------------------
@@ -107,9 +108,38 @@ Route::domain('tway.localhost')->group(function () {
         });
         
         Route::get('/admin/tenant-dashboard', function() {
+            // Get the tenant for this domain
+            $tenant = \App\Models\Tenant::where('domain', 'tway.localhost')->first();
+            
+            if (!$tenant) {
+                return redirect('/login')->with('error', 'Tenant not found');
+            }
+            
+            // Configure tenant database connection
+            config(['database.connections.tenant.database' => $tenant->database]);
+            \Illuminate\Support\Facades\DB::purge('tenant');
+            \Illuminate\Support\Facades\DB::reconnect('tenant');
+            
+            // Get products from tenant database
+            try {
+                $products = \Illuminate\Support\Facades\DB::connection('tenant')
+                    ->table('products')
+                    ->select('id', 'name', 'price', 'description', 'image', 'created_at', 'updated_at')
+                    ->get();
+                
+                \Illuminate\Support\Facades\Log::info('Fetched products for tway tenant', [
+                    'count' => $products->count()
+                ]);
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::error('Error fetching products for tway tenant', [
+                    'error' => $e->getMessage()
+                ]);
+                $products = collect();
+            }
+            
             return view('tenant.dashboard', [
-                'tenant' => \App\Models\Tenant::where('domain', 'tway.localhost')->first(),
-                'products' => []
+                'tenant' => $tenant,
+                'products' => $products
             ]);
         })->name('tway.dashboard');
     });
@@ -136,9 +166,38 @@ Route::domain('hggh.localhost')->group(function () {
         });
         
         Route::get('/admin/tenant-dashboard', function() {
+            // Get the tenant for this domain
+            $tenant = \App\Models\Tenant::where('domain', 'hggh.localhost')->first();
+            
+            if (!$tenant) {
+                return redirect('/login')->with('error', 'Tenant not found');
+            }
+            
+            // Configure tenant database connection
+            config(['database.connections.tenant.database' => $tenant->database]);
+            \Illuminate\Support\Facades\DB::purge('tenant');
+            \Illuminate\Support\Facades\DB::reconnect('tenant');
+            
+            // Get products from tenant database
+            try {
+                $products = \Illuminate\Support\Facades\DB::connection('tenant')
+                    ->table('products')
+                    ->select('id', 'name', 'price', 'description', 'image', 'created_at', 'updated_at')
+                    ->get();
+                
+                \Illuminate\Support\Facades\Log::info('Fetched products for hggh tenant', [
+                    'count' => $products->count()
+                ]);
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::error('Error fetching products for hggh tenant', [
+                    'error' => $e->getMessage()
+                ]);
+                $products = collect();
+            }
+            
             return view('tenant.dashboard', [
-                'tenant' => \App\Models\Tenant::where('domain', 'hggh.localhost')->first(),
-                'products' => []
+                'tenant' => $tenant,
+                'products' => $products
             ]);
         })->name('hggh.dashboard');
     });
