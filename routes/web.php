@@ -166,6 +166,15 @@ $registerTenantRoutes = function($domain) {
 // Register routes for existing tenants
 $registerTenantRoutes('tway.localhost');
 $registerTenantRoutes('hggh.localhost');
+$registerTenantRoutes('test.localhost');
+$registerTenantRoutes('yere.localhost');
+$registerTenantRoutes('crux.localhost');
+$registerTenantRoutes('jollibee.localhost');
+$registerTenantRoutes('klevie.localhost');
+$registerTenantRoutes('penshoppe.localhost');
+$registerTenantRoutes('manginasal.localhost');
+$registerTenantRoutes('chowking.localhost');
+$registerTenantRoutes('watsons.localhost');
 
 // When adding a new tenant, just call the function with the new domain
 // $registerTenantRoutes('newtenant.localhost');

@@ -176,7 +176,7 @@
                             </thead>
                             <tbody>
                                 @forelse($products as $product)
-                                    <tr>
+                                    <tr data-product-id="{{ $product->id }}">
                                         <td class="text-center align-middle">
                                             @if(isset($product->image) && $product->image)
                                                 <img src="{{ Storage::url($product->image) }}" 
@@ -290,8 +290,31 @@
     </div>
 </div>
 
+<!-- Delete Confirmation Modal -->
+<div class="modal fade" id="deleteConfirmationModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title">Delete Product</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to delete "<span id="productNameToDelete"></span>"?</p>
+                <p class="mb-0 text-muted small">This action cannot be undone.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" id="confirmDeleteBtn">Delete</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 @push('scripts')
 <script>
+let deleteModal;
+let currentProductId;
+
 // Add an extra check to see if the theme needs to be loaded due to caching
 document.addEventListener('DOMContentLoaded', function() {
     // If we have a theme success message but the theme doesn't look applied, try reloading
@@ -316,6 +339,45 @@ document.addEventListener('DOMContentLoaded', function() {
             console.log('Theme appears to be missing despite update. Forcing reload...');
             location.reload(true);
         }
+    }
+
+    // Initialize delete modal
+    deleteModal = new bootstrap.Modal(document.getElementById('deleteConfirmationModal'));
+    
+    // Set up delete confirmation button handler
+    document.getElementById('confirmDeleteBtn').addEventListener('click', function() {
+        if (currentProductId) {
+            fetch(`/admin/products/${currentProductId}`, {
+                method: 'DELETE',
+                headers: {
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content'),
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.message) {
+                    location.reload();
+                } else if (data.error) {
+                    alert('Error: ' + data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error deleting product:', error);
+                alert('Error deleting product');
+            });
+            
+            // Hide the modal after initiating delete
+            deleteModal.hide();
+        }
+    });
+
+    // Theme preview functionality
+    const themeSelect = document.getElementById('themeSelect');
+    if (themeSelect) {
+        themeSelect.addEventListener('change', updateThemePreview);
+        // Initialize theme preview
+        updateThemePreview();
     }
 });
 
@@ -414,39 +476,14 @@ function editProduct(id) {
 }
 
 function deleteProduct(id) {
-    if (confirm('Are you sure you want to delete this product?')) {
-        fetch(`/admin/products/${id}`, {
-            method: 'DELETE',
-            headers: {
-                'X-CSRF-TOKEN': '{{ csrf_token() }}',
-                'Content-Type': 'application/json'
-            }
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.message) {
-                location.reload();
-            } else if (data.error) {
-                alert('Error: ' + data.error);
-            }
-        })
-        .catch(error => {
-            console.error('Error deleting product:', error);
-            alert('Error deleting product');
-        });
-    }
+    // Show the custom modal
+    const productName = document.querySelector(`tr[data-product-id="${id}"] td:nth-child(2)`).textContent;
+    document.getElementById('productNameToDelete').textContent = productName;
+    currentProductId = id;
+    deleteModal.show();
 }
 
 // Theme preview functionality
-document.addEventListener('DOMContentLoaded', function() {
-    const themeSelect = document.getElementById('themeSelect');
-    if (themeSelect) {
-        themeSelect.addEventListener('change', updateThemePreview);
-        // Initialize theme preview
-        updateThemePreview();
-    }
-});
-
 function updateThemePreview() {
     const themeSelect = document.getElementById('themeSelect');
     const themeCard = document.querySelector('.theme-card');

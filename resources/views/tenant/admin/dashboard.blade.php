@@ -1,6 +1,10 @@
 @extends('layouts.app')
 
 @section('content')
+<!-- Add SweetAlert2 CSS and JS -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
 <div class="container">
     <div class="row justify-content-center">
         <div class="col-md-12">
@@ -36,7 +40,7 @@
                             </thead>
                             <tbody>
                                 @foreach($products as $product)
-                                <tr>
+                                <tr data-product-id="{{ $product->id }}">
                                     <td>
                                         @if($product->image)
                                             <img src="{{ asset('storage/' . $product->image) }}" 
@@ -121,16 +125,79 @@
     </div>
 </div>
 
+<!-- Delete Confirmation Modal -->
+<div class="modal fade" id="deleteConfirmationModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title">Delete Product</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to delete "<span id="productNameToDelete"></span>"?</p>
+                <p class="mb-0 text-muted small">This action cannot be undone.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" id="confirmDeleteBtn">Delete</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 @push('scripts')
 <script>
+let deleteModal;
+let currentProductId;
+
+document.addEventListener('DOMContentLoaded', function() {
+    deleteModal = new bootstrap.Modal(document.getElementById('deleteConfirmationModal'));
+    
+    // Set up delete confirmation button handler
+    document.getElementById('confirmDeleteBtn').addEventListener('click', function() {
+        if (currentProductId) {
+            fetch(`/admin/products/${currentProductId}`, {
+                method: 'DELETE',
+                headers: {
+                    'X-CSRF-TOKEN': '{{ csrf_token() }}',
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.message) {
+                    location.reload();
+                } else if (data.error) {
+                    alert('Error: ' + data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error deleting product:', error);
+                alert('Error deleting product');
+            });
+            
+            // Hide the modal after initiating delete
+            deleteModal.hide();
+        }
+    });
+});
+
+function deleteProduct(id) {
+    // Show the custom modal
+    const productName = document.querySelector(`tr[data-product-id="${id}"] td:nth-child(2)`).textContent;
+    document.getElementById('productNameToDelete').textContent = productName;
+    currentProductId = id;
+    deleteModal.show();
+}
+
 function openModal() {
     document.getElementById('productModalLabel').textContent = 'Add New Product';
     document.getElementById('productForm').reset();
     document.getElementById('currentImage').classList.add('d-none');
     document.getElementById('productForm').action = "{{ route('tenant.products.store') }}";
     document.getElementById('method').value = 'POST';
-    var modal = new bootstrap.Modal(document.getElementById('productModal'));
-    modal.show();
+    const productModal = new bootstrap.Modal(document.getElementById('productModal'));
+    productModal.show();
 }
 
 function editProduct(id) {
@@ -151,30 +218,15 @@ function editProduct(id) {
             document.getElementById('productForm').action = `/admin/products/${data.id}`;
             document.getElementById('method').value = 'PUT';
             
-            var modal = new bootstrap.Modal(document.getElementById('productModal'));
-            modal.show();
+            const productModal = new bootstrap.Modal(document.getElementById('productModal'));
+            productModal.show();
         });
-}
-
-function deleteProduct(id) {
-    if (confirm('Are you sure you want to delete this product?')) {
-        fetch(`/admin/products/${id}`, {
-            method: 'DELETE',
-            headers: {
-                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content
-            }
-        }).then(response => {
-            if (response.ok) {
-                window.location.reload();
-            }
-        });
-    }
 }
 
 function openImageZoom(imageSrc) {
     document.getElementById('zoomedImage').src = imageSrc;
-    var modal = new bootstrap.Modal(document.getElementById('imageZoomModal'));
-    modal.show();
+    const imageZoomModal = new bootstrap.Modal(document.getElementById('imageZoomModal'));
+    imageZoomModal.show();
 }
 </script>
 @endpush
